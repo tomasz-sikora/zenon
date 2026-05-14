@@ -1,0 +1,391 @@
+import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import {
+  Copy,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Pencil,
+  RefreshCw,
+  Wrench,
+  X,
+  Brain,
+  Loader2,
+  AlertCircle,
+} from "lucide-react";
+import type { Message, ToolResultContent, ToolUseContent } from "@zenon/shared-types";
+import { cn } from "@/lib/utils";
+
+interface MessageBubbleProps {
+  message: Message;
+  isStreaming: boolean;
+  /** Lookup map of toolCallId → ToolResultContent, built by MessageList from tool-role messages */
+  toolResultMap: Map<string, ToolResultContent>;
+  onEditMessage: (messageId: string, text: string) => void;
+  onRetryMessage: (messageId: string) => void;
+}
+
+export function MessageBubble({
+  message,
+  isStreaming,
+  toolResultMap,
+  onEditMessage,
+  onRetryMessage,
+}: MessageBubbleProps) {
+  const isUser = message.role === "user";
+  const isAssistant = message.role === "assistant";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(() => getMessageText(message));
+
+  const saveEdit = () => {
+    const next = draft.trim();
+    if (!next) return;
+    onEditMessage(message.id, next);
+    setEditing(false);
+  };
+
+  return (
+    <div
+      className={cn(
+        "group flex gap-3 animate-fade-in",
+        isUser && "flex-row-reverse",
+      )}
+    >
+      {/* Avatar */}
+      {!isUser && (
+        <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground text-sm">
+          {isStreaming ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            "Z"
+          )}
+        </div>
+      )}
+
+      {/* Content */}
+      <div className={cn("flex max-w-[85%] flex-col gap-1.5", isUser && "items-end")}>
+        {editing && isUser ? (
+          <div className="w-full min-w-[320px] rounded-2xl rounded-tr-sm bg-primary/10 p-2">
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              rows={Math.min(8, Math.max(2, draft.split("\n").length))}
+              className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring"
+            />
+            <div className="mt-2 flex justify-end gap-2">
+              <button
+                onClick={() => { setDraft(getMessageText(message)); setEditing(false); }}
+                className="flex items-center gap-1 rounded border border-border px-2 py-1 text-xs hover:bg-muted"
+              >
+                <X className="h-3 w-3" />
+                Cancel
+              </button>
+              <button
+                onClick={saveEdit}
+                className="flex items-center gap-1 rounded bg-primary px-2 py-1 text-xs text-primary-foreground hover:bg-primary/90"
+              >
+                <Check className="h-3 w-3" />
+                Save & retry
+              </button>
+            </div>
+          </div>
+        ) : (
+          message.content.map((block, i) => (
+            <ContentBlock
+              key={i}
+              block={block}
+              isUser={isUser}
+              isStreaming={isStreaming && i === message.content.length - 1}
+              toolResultMap={toolResultMap}
+            />
+          ))
+        )}
+
+        {/* Per-message token usage */}
+        {message.usage && !isStreaming && (
+          <div className="text-[10px] text-muted-foreground/50 mt-0.5">
+            {message.usage.inputTokens}↑ {message.usage.outputTokens}↓
+            {message.usage.cacheReadTokens ? ` · ${message.usage.cacheReadTokens} cached` : ""}
+          </div>
+        )}
+
+        {/* Action buttons */}
+        {!editing && !isStreaming && (
+          <div className={cn("flex gap-1 opacity-0 transition-opacity group-hover:opacity-100", isUser && "justify-end")}>
+            {isUser && (
+              <button
+                onClick={() => { setDraft(getMessageText(message)); setEditing(true); }}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <Pencil className="h-3 w-3" />
+                Edit
+              </button>
+            )}
+            {isAssistant && (
+              <button
+                onClick={() => onRetryMessage(message.id)}
+                className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <RefreshCw className="h-3 w-3" />
+                Retry
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Individual content block renderers ───────────────────────────────────────
+
+function ContentBlock({
+  block,
+  isUser,
+  isStreaming,
+  toolResultMap,
+}: {
+  block: Message["content"][number];
+  isUser: boolean;
+  isStreaming: boolean;
+  toolResultMap: Map<string, ToolResultContent>;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  if (block.type === "thinking") {
+    return <ThinkingBlock thinking={block.thinking} isStreaming={isStreaming} />;
+  }
+
+  if (block.type === "text") {
+    return (
+      <div
+        className={cn(
+          "relative rounded-2xl px-4 py-2.5 text-sm",
+          isUser
+            ? "bg-primary text-primary-foreground rounded-tr-sm"
+            : "bg-muted/60 rounded-tl-sm",
+        )}
+      >
+        {isUser ? (
+          <p className="whitespace-pre-wrap">{block.text}</p>
+        ) : (
+          <div className="prose prose-sm dark:prose-invert max-w-none">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{block.text}</ReactMarkdown>
+            {isStreaming && (
+              <span className="inline-block h-4 w-0.5 bg-current animate-pulse ml-0.5 align-middle" />
+            )}
+          </div>
+        )}
+        {block.text && !isStreaming && (
+          <button
+            onClick={async () => {
+              await navigator.clipboard.writeText(block.text);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            }}
+            className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-black/10 dark:hover:bg-white/10 transition-opacity"
+            aria-label="Copy"
+          >
+            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (block.type === "tool_use") {
+    const result = toolResultMap.get(block.toolCallId);
+    return <ToolCallCard call={block} result={result} isStreaming={isStreaming} />;
+  }
+
+  if (block.type === "image") {
+    return (
+      <img
+        src={block.url}
+        alt="attachment"
+        className="max-w-sm rounded-lg border border-border"
+      />
+    );
+  }
+
+  // tool_result is rendered inside ToolCallCard — never directly
+  return null;
+}
+
+// ─── Thinking block ───────────────────────────────────────────────────────────
+
+function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreaming: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <div className="rounded-xl border border-amber-200/50 bg-amber-50/30 dark:border-amber-800/30 dark:bg-amber-950/20 text-xs overflow-hidden w-full">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-amber-100/30 dark:hover:bg-amber-900/20 transition-colors"
+      >
+        <Brain className={cn("h-3.5 w-3.5 text-amber-600 dark:text-amber-400 shrink-0", isStreaming && "animate-pulse")} />
+        <span className="font-medium text-amber-700 dark:text-amber-400">
+          {isStreaming ? "Reasoning…" : "Reasoning"}
+        </span>
+        <span className="ml-auto text-amber-500/60">
+          {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        </span>
+      </button>
+      {expanded && (
+        <div className="border-t border-amber-200/40 dark:border-amber-800/30 bg-amber-50/20 dark:bg-amber-950/10 px-3 py-2">
+          <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-amber-900/70 dark:text-amber-200/60 font-mono">
+            {thinking}
+            {isStreaming && (
+              <span className="inline-block h-3 w-0.5 bg-amber-500 animate-pulse ml-0.5 align-middle" />
+            )}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tool call + result card ──────────────────────────────────────────────────
+
+function ToolCallCard({
+  call,
+  result,
+  isStreaming,
+}: {
+  call: ToolUseContent;
+  result?: ToolResultContent;
+  isStreaming: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isPending = !result && isStreaming;
+  const hasError = result?.isError;
+
+  return (
+    <div
+      className={cn(
+        "rounded-xl border text-xs overflow-hidden w-full",
+        hasError
+          ? "border-destructive/40 bg-destructive/5"
+          : "border-border bg-muted/25",
+      )}
+    >
+      {/* Header row */}
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/40 transition-colors"
+      >
+        {isPending ? (
+          <Loader2 className="h-3.5 w-3.5 text-primary animate-spin shrink-0" />
+        ) : hasError ? (
+          <AlertCircle className="h-3.5 w-3.5 text-destructive shrink-0" />
+        ) : (
+          <Wrench className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        )}
+        <span className="font-mono font-medium">{call.toolName}</span>
+        {isPending && (
+          <span className="text-muted-foreground italic">running…</span>
+        )}
+        {hasError && (
+          <span className="text-destructive font-medium">error</span>
+        )}
+        {result && !hasError && (
+          <span className="text-green-600 dark:text-green-400 text-[10px]">✓</span>
+        )}
+        <span className="ml-auto text-muted-foreground/60">
+          {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+        </span>
+      </button>
+
+      {/* Expanded: input + result */}
+      {expanded && (
+        <div className="border-t border-border divide-y divide-border/60">
+          {/* Input */}
+          <div className="px-3 py-2 bg-background/40">
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1 font-medium">Input</div>
+            <pre className="overflow-x-auto text-[11px] leading-relaxed">
+              {JSON.stringify(call.toolInput, null, 2)}
+            </pre>
+          </div>
+
+          {/* Output */}
+          {result ? (
+            <div className={cn("px-3 py-2", hasError ? "bg-destructive/5" : "bg-background/30")}>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1 font-medium">
+                {hasError ? "Error" : "Output"}
+              </div>
+              <ToolResultBody content={result.content} />
+            </div>
+          ) : (
+            <div className="px-3 py-2 flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              <span>Waiting for result…</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tool result body (text / stdout+stderr / images) ─────────────────────────
+
+function ToolResultBody({ content }: { content: string }) {
+  const parsed = parseToolResultContent(content);
+
+  if (parsed) {
+    return (
+      <div className="space-y-1.5">
+        {parsed.stdout && (
+          <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-muted/60 px-2 py-1.5 text-[11px] max-h-64">
+            {parsed.stdout}
+          </pre>
+        )}
+        {parsed.stderr && (
+          <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive max-h-32">
+            {parsed.stderr}
+          </pre>
+        )}
+        {parsed.figures.map((fig, idx) => (
+          <img
+            key={idx}
+            src={fig}
+            alt={`figure ${idx + 1}`}
+            className="max-w-full rounded-md border border-border bg-white"
+          />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <pre className="overflow-x-auto whitespace-pre-wrap text-[11px] leading-relaxed max-h-64">
+      {content}
+    </pre>
+  );
+}
+
+function parseToolResultContent(content: string):
+  | { stdout?: string; stderr?: string; figures: string[] }
+  | null {
+  try {
+    const parsed = JSON.parse(content) as { stdout?: unknown; stderr?: unknown; figures?: unknown };
+    const figures = Array.isArray(parsed.figures)
+      ? parsed.figures.filter((f): f is string => typeof f === "string")
+      : [];
+    const stdout = typeof parsed.stdout === "string" ? parsed.stdout : undefined;
+    const stderr = typeof parsed.stderr === "string" ? parsed.stderr : undefined;
+    if (!stdout && !stderr && figures.length === 0) return null;
+    return { stdout, stderr, figures };
+  } catch {
+    return null;
+  }
+}
+
+function getMessageText(message: Message): string {
+  return message.content
+    .filter((b) => b.type === "text")
+    .map((b) => (b.type === "text" ? b.text : ""))
+    .join("\n");
+}
+

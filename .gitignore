@@ -1,0 +1,33 @@
+node_modules/
+dist/
+.turbo/
+*.log
+.env
+.env.local
+.env.*.local
+.DS_Store
+coverage/
+
+# Editor / OS
+.idea/
+.vscode/
+Thumbs.db
+
+# pnpm
+.pnpm-store/
+
+# Vite / build output
+*.local
+vite.config.d.ts
+vite.config.js
+
+# TypeScript declaration caches
+*.d.ts.map
+
+# Docker build context
+docker-compose.override.yml
+
+# TLS certificates (generated at build time — do not commit real certs)
+*.pem
+*.key
+*.crt

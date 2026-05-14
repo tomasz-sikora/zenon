@@ -1,0 +1,36 @@
+# ─── Build: install with pnpm, bundle with esbuild ───────────────────────────
+FROM node:22-alpine AS builder
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY packages/shared-types/package.json ./packages/shared-types/
+COPY apps/proxy/package.json ./apps/proxy/
+COPY apps/web/package.json ./apps/web/
+
+RUN pnpm install --frozen-lockfile
+
+COPY tsconfig.base.json ./
+COPY packages/shared-types/ ./packages/shared-types/
+COPY apps/proxy/ ./apps/proxy/
+
+# Install esbuild, then bundle everything into one ESM file
+RUN pnpm add -D esbuild --filter @zenon/proxy
+RUN cd apps/proxy && ./node_modules/.bin/esbuild src/server-node.ts \
+      --bundle \
+      --platform=node \
+      --format=esm \
+      --outfile=dist/server.mjs
+
+# ─── Runtime: minimal node image ─────────────────────────────────────────────
+FROM node:22-alpine AS runtime
+
+WORKDIR /app
+COPY --from=builder /app/apps/proxy/dist/server.mjs ./server.mjs
+
+ENV PORT=3001
+EXPOSE 3001
+
+CMD ["node", "server.mjs"]
