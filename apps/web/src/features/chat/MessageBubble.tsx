@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import type { Message, ToolResultContent, ToolUseContent } from "@zenon/shared-types";
 import { cn } from "@/lib/utils";
+import type { AskUserQuestionType } from "@/lib/tools/askUser";
+import { isAskUserQuestionType } from "@/lib/tools/askUser";
 
 interface MessageBubbleProps {
   message: Message;
@@ -374,10 +376,9 @@ function ToolCallCard({
   );
 }
 
-type HumanQuestionType = "open" | "confirm" | "single_choice" | "multiple_choice";
 type HumanPrompt = {
   question: string;
-  questionType: HumanQuestionType;
+  questionType: AskUserQuestionType;
   options: string[];
   placeholder?: string;
   minSelections?: number;
@@ -390,10 +391,8 @@ function getHumanPrompt(call: ToolUseContent, result?: ToolResultContent): Human
   if (!payload || typeof payload !== "object") return null;
   const question = typeof payload.question === "string" ? payload.question.trim() : "";
   if (!question) return null;
-  const questionType = (
-    ["open", "confirm", "single_choice", "multiple_choice"] as const
-  ).includes(payload.questionType as HumanQuestionType)
-    ? (payload.questionType as HumanQuestionType)
+  const questionType = isAskUserQuestionType(payload.questionType)
+    ? payload.questionType
     : "open";
   const options = Array.isArray(payload.options)
     ? payload.options.filter((opt): opt is string => typeof opt === "string").map((opt) => opt.trim()).filter(Boolean)
@@ -439,7 +438,9 @@ function HumanPromptResponse({
   const send = (answer: string | string[]) => {
     const formatted = Array.isArray(answer) ? answer.join(", ") : answer;
     if (!formatted.trim()) return;
-    onSubmitToolPromptResponse(`Answer to "${prompt.question}": ${formatted}`);
+    onSubmitToolPromptResponse(
+      `ask_user_response: ${JSON.stringify({ question: prompt.question, answer: formatted })}`,
+    );
   };
 
   if (prompt.questionType === "open") {

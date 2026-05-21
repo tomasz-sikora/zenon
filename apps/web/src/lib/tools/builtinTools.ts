@@ -1,5 +1,6 @@
 import { toolRegistry } from "./registry";
 import type { ToolResult } from "@zenon/shared-types";
+import { isAskUserQuestionType } from "./askUser";
 
 /** fetch_webpage tool — reads a URL and returns readable text */
 toolRegistry.register({
@@ -133,10 +134,8 @@ toolRegistry.register({
   executor: async (input): Promise<ToolResult> => {
     const question = typeof input.question === "string" ? input.question.trim() : "";
     const questionTypeRaw = typeof input.questionType === "string" ? input.questionType : "open";
-    const questionType = (
-      ["open", "confirm", "single_choice", "multiple_choice"] as const
-    ).includes(questionTypeRaw as "open" | "confirm" | "single_choice" | "multiple_choice")
-      ? (questionTypeRaw as "open" | "confirm" | "single_choice" | "multiple_choice")
+    const questionType = isAskUserQuestionType(questionTypeRaw)
+      ? questionTypeRaw
       : "open";
 
     if (!question) {
