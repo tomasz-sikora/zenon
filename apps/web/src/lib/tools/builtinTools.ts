@@ -88,6 +88,107 @@ toolRegistry.register({
   },
 });
 
+/** ask_user tool */
+toolRegistry.register({
+  definition: {
+    name: "ask_user",
+    description:
+      "Ask the human in chat for follow-up input and pause the agent until they respond. Supports open, confirmation, single-choice, and multiple-choice questions.",
+    category: "utility",
+    inputSchema: {
+      type: "object",
+      properties: {
+        question: {
+          type: "string",
+          description: "Question to show to the human in chat",
+        },
+        questionType: {
+          type: "string",
+          description:
+            "Question mode: open (free text), confirm (yes/no), single_choice (one option), multiple_choice (multiple options).",
+          enum: ["open", "confirm", "single_choice", "multiple_choice"],
+          default: "open",
+        },
+        options: {
+          type: "array",
+          description: "Selectable options for confirm/single_choice/multiple_choice questions",
+          items: { type: "string" },
+        },
+        placeholder: {
+          type: "string",
+          description: "Optional placeholder text for open questions",
+        },
+        minSelections: {
+          type: "number",
+          description: "Minimum selections for multiple_choice (default: 1)",
+        },
+        maxSelections: {
+          type: "number",
+          description: "Maximum selections for multiple_choice (default: options length)",
+        },
+      },
+      required: ["question"],
+    },
+  },
+  executor: async (input): Promise<ToolResult> => {
+    const question = typeof input.question === "string" ? input.question.trim() : "";
+    const questionTypeRaw = typeof input.questionType === "string" ? input.questionType : "open";
+    const questionType = (
+      ["open", "confirm", "single_choice", "multiple_choice"] as const
+    ).includes(questionTypeRaw as "open" | "confirm" | "single_choice" | "multiple_choice")
+      ? (questionTypeRaw as "open" | "confirm" | "single_choice" | "multiple_choice")
+      : "open";
+
+    if (!question) {
+      return {
+        toolCallId: "",
+        toolName: "ask_user",
+        isError: true,
+        content: "The 'question' field is required and cannot be empty.",
+      };
+    }
+
+    const rawOptions = Array.isArray(input.options)
+      ? input.options.filter((opt): opt is string => typeof opt === "string")
+      : [];
+    let options = rawOptions.map((opt) => opt.trim()).filter(Boolean).slice(0, 12);
+    if (questionType === "confirm" && options.length === 0) {
+      options = ["Yes", "No"];
+    }
+    if ((questionType === "single_choice" || questionType === "multiple_choice") && options.length === 0) {
+      return {
+        toolCallId: "",
+        toolName: "ask_user",
+        isError: true,
+        content: `Question type "${questionType}" requires a non-empty 'options' array.`,
+      };
+    }
+
+    const placeholder = typeof input.placeholder === "string" ? input.placeholder : "";
+    const minRaw = Number(input.minSelections);
+    const maxRaw = Number(input.maxSelections);
+    const minSelections = Number.isFinite(minRaw) ? Math.max(1, Math.floor(minRaw)) : 1;
+    const maxSelections = Number.isFinite(maxRaw)
+      ? Math.max(minSelections, Math.floor(maxRaw))
+      : Math.max(minSelections, options.length || 1);
+
+    return {
+      toolCallId: "",
+      toolName: "ask_user",
+      isError: false,
+      content: JSON.stringify({
+        type: "human_input_request",
+        question,
+        questionType,
+        options,
+        placeholder,
+        minSelections,
+        maxSelections,
+      }),
+    };
+  },
+});
+
 /** datetime tool */
 toolRegistry.register({
   definition: {

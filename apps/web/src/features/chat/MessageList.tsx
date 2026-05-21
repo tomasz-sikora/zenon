@@ -9,6 +9,7 @@ interface MessageListProps {
   isStreaming: boolean;
   onEditMessage: (messageId: string, text: string) => void;
   onRetryMessage: (messageId: string) => void;
+  onSubmitToolPromptResponse: (content: string) => void;
 }
 
 export function MessageList({
@@ -17,6 +18,7 @@ export function MessageList({
   isStreaming,
   onEditMessage,
   onRetryMessage,
+  onSubmitToolPromptResponse,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -69,6 +71,7 @@ export function MessageList({
               isStreaming={streamingMsgId === msg.id && isStreaming}
               onEditMessage={onEditMessage}
               onRetryMessage={onRetryMessage}
+              onSubmitToolPromptResponse={onSubmitToolPromptResponse}
             />
           ))}
         <div ref={bottomRef} />

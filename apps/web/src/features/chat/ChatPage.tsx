@@ -427,6 +427,11 @@ export default function ChatPage() {
     void startAssistantRun(conversationId, updated.messages);
   };
 
+  const handleToolPromptResponse = (content: string) => {
+    if (!content.trim()) return;
+    void handleSend(content);
+  };
+
   const messages = conversation?.messages ?? [];
 
   const handleExport = () => {
@@ -592,6 +597,7 @@ export default function ChatPage() {
           isStreaming={isStreaming}
           onEditMessage={handleEditMessage}
           onRetryMessage={handleRetryMessage}
+          onSubmitToolPromptResponse={handleToolPromptResponse}
         />
 
         {/* Status bar */}
