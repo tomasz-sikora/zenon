@@ -137,12 +137,25 @@ Large binary data (uploaded documents, agent knowledge files, workspace files, a
 ```
 workspaces/
   <workspaceId>/
-    files/       ← user-uploaded files
+    files/       ← user-uploaded files + Python output files
     artifacts/   ← tool output files
     history/     ← (reserved)
 ```
 
 OPFS is accessed synchronously in dedicated workers where possible, and asynchronously from the main thread via the helpers in `lib/storage/opfs.ts`.
+
+Key helpers exported from `opfs.ts`:
+
+| Helper | Description |
+|---|---|
+| `writeFile` / `readFile` / `deleteFile` | Low-level file I/O |
+| `listDir` / `listDirRecursive` | Directory listing with MIME detection |
+| `getDirStats(path)` | Returns `{ fileCount, totalSize }` for a directory tree |
+| `createTarGz(dirPath)` | Streams all files under a path into a POSIX tar archive compressed with `CompressionStream('gzip')` |
+
+### Python → workspace file flow
+
+When the `python_exec` tool finishes, `tools.worker.ts` snapshots the Pyodide working directory before and after execution. Any new files are read as base64 and included in the `WorkerResponse.outputFiles` map. `pyodideTools.ts` receives this map on the main thread and writes each file into the current workspace's `files/` directory via `writeFile()`.
 
 ---
 
@@ -152,7 +165,7 @@ Heavy or blocking operations run in Web Workers to keep the UI responsive:
 
 | Worker | Runtime | Handles |
 |---|---|---|
-| `tools.worker.ts` | Pyodide (WASM Python 3.12) | `python_exec` tool — sandboxed Python, matplotlib |
+| `tools.worker.ts` | Pyodide (WASM Python 3.12) | `python_exec` tool — sandboxed Python, matplotlib, captures output files |
 | `rag.worker.ts` | Transformers.js | Embedding generation for RAG indexing & search |
 | `speech.worker.ts` | Whisper WASM | ASR transcription |
 | `local-webgpu.worker.ts` | Transformers.js (WebGPU) | On-device LLM inference |

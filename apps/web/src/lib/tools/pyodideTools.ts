@@ -4,6 +4,9 @@
 
 import type { SimpleToolRegistration } from "./registry";
 import { toolRegistry } from "./registry";
+import { writeFile, guessMime } from "@/lib/storage/opfs";
+import { useWorkspaceStore } from "@/store/workspaceStore";
+import { workspacePaths } from "@/lib/storage/workspace";
 
 interface PendingRequest {
   resolve: (v: unknown) => void;
@@ -32,6 +35,7 @@ function getWorker(): Worker {
         error?: string;
         text?: string;
         figures?: string[];
+        outputFiles?: Record<string, string>;
       };
 
       if (msg.id === "__init__") {
@@ -56,7 +60,27 @@ function getWorker(): Worker {
 
       if (msg.type === "result") {
         if (msg.figures) req.figures.push(...msg.figures);
-        req.resolve({ result: msg.result, stdout: req.stdout.join(""), stderr: req.stderr.join(""), figures: req.figures });
+        // Persist files written by Python to the active workspace OPFS directory
+        if (msg.outputFiles && Object.keys(msg.outputFiles).length > 0) {
+          const wsId = useWorkspaceStore.getState().currentWorkspaceId;
+          if (wsId) {
+            const filesDir = workspacePaths.files(wsId);
+            for (const [filename, b64] of Object.entries(msg.outputFiles)) {
+              const binary = atob(b64);
+              const bytes = new Uint8Array(binary.length);
+              for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+              // best-effort write; don't block the result
+              writeFile(`${filesDir}/${filename}`, bytes.buffer).catch(() => {});
+            }
+          }
+        }
+        req.resolve({
+          result: msg.result,
+          stdout: req.stdout.join(""),
+          stderr: req.stderr.join(""),
+          figures: req.figures,
+          outputFiles: msg.outputFiles ?? {},
+        });
         pending.delete(msg.id);
       } else if (msg.type === "installed") {
         req.resolve({ success: true });
@@ -91,6 +115,8 @@ async function execPython(code: string): Promise<{
   stdout: string;
   stderr: string;
   figures: string[];
+  outputFiles: Record<string, string>;
+  [key: string]: unknown;
 }> {
   const w = getWorker();
   await waitForReady();
@@ -98,7 +124,7 @@ async function execPython(code: string): Promise<{
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve: resolve as (v: unknown) => void, reject, stdout: [], stderr: [], figures: [] });
     w.postMessage({ id, type: "exec", code });
-  }) as Promise<{ result: unknown; stdout: string; stderr: string; figures: string[] }>;
+  }) as Promise<{ result: unknown; stdout: string; stderr: string; figures: string[]; outputFiles: Record<string, string> }>;
 }
 
 async function installPackages(packages: string[]): Promise<void> {
@@ -117,7 +143,10 @@ const pythonExecTool: SimpleToolRegistration = {
     "Execute Python code using Pyodide (WASM Python interpreter running in the browser). " +
     "Supports standard library, numpy, pandas, matplotlib, scipy, and micropip for additional packages. " +
     "Use print() for output. matplotlib.pyplot.show() saves figures as images. " +
-    "Returns stdout, stderr, any printed result, and base64-encoded PNG figures.",
+    "Any files created in the current working directory (e.g. open('output.csv','w'), plt.savefig('chart.png'), " +
+    "os.makedirs('project') + open('project/main.py','w')) are automatically saved to the workspace and " +
+    "will appear in the Workspace file browser. Always write to relative paths — never use absolute paths " +
+    "like /tmp/ or hardcoded OPFS paths. Returns stdout, stderr, any printed result, and base64-encoded PNG figures.",
   inputSchema: {
     type: "object",
     properties: {
@@ -130,13 +159,15 @@ const pythonExecTool: SimpleToolRegistration = {
   },
   execute: async (args: Record<string, unknown>) => {
     const code = args["code"] as string;
-    const { result, stdout, stderr, figures } = await execPython(code);
+    const { result, stdout, stderr, figures, outputFiles } = await execPython(code);
 
     const output: Record<string, unknown> = {};
     if (stdout) output["stdout"] = stdout;
     if (stderr) output["stderr"] = stderr;
     if (result !== undefined && result !== null) output["result"] = result;
     if (figures.length > 0) output["figures"] = figures;
+    const fileNames = Object.keys(outputFiles);
+    if (fileNames.length > 0) output["files_saved_to_workspace"] = fileNames;
 
     return output;
   },

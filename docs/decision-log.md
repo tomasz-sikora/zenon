@@ -118,3 +118,63 @@ Significant technical and architectural decisions made during the development of
 - `all-MiniLM-L6-v2` (~80 MB) produces good-quality embeddings for retrieval tasks and fits comfortably in browser memory.
 - Running embeddings in a Web Worker keeps the main thread responsive during indexing.
 - The trade-off is the one-time ~80 MB model download; subsequent runs use the cached model from IndexedDB.
+
+---
+
+## 11. Python output files captured via FS snapshot
+
+**Decision:** After each `python_exec` invocation, diff the Pyodide working directory against a snapshot taken before execution to detect new files, then transfer them to OPFS.
+
+**Rationale:**
+- Python code can write files through any mechanism (`open()`, pandas `to_csv()`, matplotlib `savefig()`, etc.). Intercepting every write call would require patching the Pyodide VFS; diffing the directory is simpler and catches all cases.
+- Files are read as base64 inside the worker and sent via `postMessage` to the main thread, where they are written to the current workspace's OPFS `files/` directory.
+- The approach adds negligible overhead for typical workloads (directory listing is fast; only new files are transferred).
+
+---
+
+## 12. tar.gz export using native CompressionStream
+
+**Decision:** Implement workspace tar.gz export with a hand-written POSIX tar header builder and the browser-native `CompressionStream('gzip')` API rather than adding a bundled compression library.
+
+**Rationale:**
+- Adding `pako`, `fflate`, or similar would increase the bundle size by ~50–200 kB for functionality used infrequently.
+- `CompressionStream` is available in all modern browsers (Chrome 80+, Firefox 113+, Safari 16.4+) and requires zero bytes of bundle space.
+- A POSIX ustar tar format is straightforward to implement (~100 lines); the spec is stable and well-documented.
+- The trade-off is that the export cannot be streamed directly to disk (it is buffered in memory), but workspace sizes are expected to remain well under the available tab heap.
+
+---
+
+## 13. vitest + jsdom for frontend unit/UI tests
+
+**Decision:** Use vitest with jsdom and `@testing-library/react` for automated tests of storage utilities and workspace UI components.
+
+**Rationale:**
+- vitest shares the Vite config (transforms, path aliases) so TypeScript and `@/` imports work out of the box without a separate Jest Babel pipeline.
+- jsdom allows rendering React components and simulating user interactions (click, type) without a real browser, making tests fast and runnable in CI.
+- OPFS is not available in jsdom; a lightweight in-memory `Map`-backed shim implemented in `src/test/setup.ts` is sufficient to test the storage layer in isolation.
+- `CompressionStream` is also shimmed in setup.ts as a pass-through to keep tar.gz tests simple.
+
+---
+
+## 14. OpenAI tool-result message format: one message per call
+
+**Decision:** `messagesToOpenAI` now uses `flatMap` to expand a single internal `role:"tool"` message (which may contain N `tool_result` content items) into N separate OpenAI API tool messages.
+
+**Rationale:**
+- The runner's internal loop is clean: all results from a parallel tool execution round are packed into one internal `role:"tool"` message with multiple content items.
+- OpenAI's API requires exactly one `role:"tool"` message **per** `tool_call_id`. Sending one combined message left N-1 results unmatched, causing a 400 `tool_call_ids did not have response messages` error on every multi-tool round.
+- The previous code used `.find()` (first result only) instead of `.filter()` + `flatMap`, so the mismatch was silent until the second API round failed.
+- `sanitizeMessages` in `runner.ts` was also rewritten to scan **all** consecutive `role:"tool"` messages following an assistant tool-call message (not just `msgs[i+1]`), ensuring orphaned history from aborted runs is fully removed before the next API call.
+
+---
+
+## 15. ChatGPT-style assistant reply after tool results
+
+**Decision:** After the last `onToolResult` fires for a round, the next model output (text, thinking, or new tool call) is placed in a **new** assistant message rather than appended to the message that contained the tool-call bubbles.
+
+**Rationale:**
+- Without this, the summary text was appended inside the same bubble as the tool-call chips, making it visually ambiguous and easy to miss.
+- Creating a fresh `role:"assistant"` message after tool results produces the familiar ChatGPT-style layout: tool-call bubble → tool-result rows → separate assistant reply below.
+- Implemented via a `needNewAssistantMsg` flag in `startAssistantRun` (ChatPage.tsx). The flag is set on every `onToolResult` and cleared (creating the new message) on the first subsequent `onChunk`, `onToolCall`, or `onThinking` event.
+- The `thinkingAccumulator` is reset when the new message is created so reasoning blocks attach to the correct message.
+

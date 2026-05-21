@@ -33,6 +33,57 @@ export interface AgentRunOptions {
 
 const MAX_TOOL_ROUNDS = 12;
 const MAX_RETRIES = 3;
+
+/**
+ * Remove any assistant tool-call messages that are not followed by matching
+ * tool-result messages. This fixes malformed history left by aborted/errored
+ * runs and prevents the OpenAI "tool_call_ids did not have response messages"
+ * 400 error.
+ */
+function sanitizeMessages(msgs: Message[]): Message[] {
+  const clean: Message[] = [];
+  let i = 0;
+  while (i < msgs.length) {
+    const msg = msgs[i];
+    if (msg.role === "assistant") {
+      const toolUseItems = msg.content.filter((c) => c.type === "tool_use");
+      if (toolUseItems.length > 0) {
+        const expectedIds = new Set(
+          toolUseItems.map((c) => c.toolCallId).filter((id): id is string => !!id),
+        );
+        // Collect ALL immediately-following tool messages (each tool result is stored separately)
+        let j = i + 1;
+        const coveredIds = new Set<string>();
+        while (j < msgs.length && msgs[j].role === "tool") {
+          for (const c of msgs[j].content) {
+            if (c.type === "tool_result" && c.toolCallId) coveredIds.add(c.toolCallId);
+          }
+          j++;
+        }
+        if (![...expectedIds].every((id) => coveredIds.has(id))) {
+          // Incomplete results — drop assistant message + all collected tool messages
+          i = j;
+          continue;
+        }
+        // All covered — keep assistant + all its tool messages
+        clean.push(msg);
+        for (let k = i + 1; k < j; k++) clean.push(msgs[k]);
+        i = j;
+        continue;
+      }
+    } else if (msg.role === "tool") {
+      const prev = clean[clean.length - 1];
+      if (!prev || prev.role !== "assistant" || !prev.content.some((c) => c.type === "tool_use")) {
+        // Orphaned tool-result with no preceding tool-call — drop it
+        i++;
+        continue;
+      }
+    }
+    clean.push(msg);
+    i++;
+  }
+  return clean;
+}
 const RETRY_DELAYS_MS = [1500, 3000, 6000];
 
 function isRetryableError(err: Error): boolean {
@@ -153,19 +204,29 @@ export async function runAgent(opts: AgentRunOptions): Promise<void> {
           },
         ]
       : []),
-    ...conversation.messages,
+    ...sanitizeMessages(conversation.messages),
   ];
 
   let round = 0;
   // Track tool call signatures for infinite loop detection: sig → times seen
   const toolCallHistory = new Map<string, number>();
+  // Set to true once any tool round completes; used to decide whether to force a summary.
+  let hadToolsExecution = false;
+  // Prevents injecting more than one forced-summary round.
+  let summaryForced = false;
+  // When true, the next round runs without tools (forces a text-only / summary response).
+  let forceNextRoundNoTools = false;
 
   while (round < MAX_TOOL_ROUNDS) {
     round++;
 
-    // On the final allowed round, strip tools → forces a text-only response / summary
+    // On the final allowed round (or after a forced-summary injection), strip tools
+    // so the model must produce a text-only response.
     const isLastRound = round === MAX_TOOL_ROUNDS;
-    const roundTools = isLastRound ? [] : tools;
+    const roundTools = (isLastRound || forceNextRoundNoTools) ? [] : tools;
+    forceNextRoundNoTools = false;
+
+    let roundHasText = false;
 
     const pendingToolCalls: Array<{
       id: string;
@@ -190,6 +251,7 @@ export async function runAgent(opts: AgentRunOptions): Promise<void> {
               },
               (chunk) => {
                 if (chunk.type === "text" && chunk.text) {
+                  roundHasText = true;
                   onChunk(chunk.text);
                 } else if (chunk.type === "thinking" && chunk.thinkingText) {
                   onThinking?.(chunk.thinkingText);
@@ -245,6 +307,19 @@ export async function runAgent(opts: AgentRunOptions): Promise<void> {
     }
 
     if (pendingToolCalls.length === 0) {
+      // If the model gave no text and tools were used in a prior round, force one
+      // more tool-free round so the model always produces a follow-up summary.
+      if (!roundHasText && hadToolsExecution && !summaryForced) {
+        summaryForced = true;
+        forceNextRoundNoTools = true;
+        messages.push({
+          id: generateId(),
+          role: "user",
+          content: [{ type: "text", text: "Please summarise what you just did and highlight any key results or next steps." }],
+          createdAt: Date.now(),
+        });
+        continue;
+      }
       onComplete(totalUsage);
       return;
     }
@@ -278,15 +353,38 @@ export async function runAgent(opts: AgentRunOptions): Promise<void> {
       createdAt: Date.now(),
     });
 
-    // Execute all tool calls in parallel
+    // Execute all tool calls in parallel.
+    // Each call gets its own try/catch so Promise.all never rejects —
+    // this ensures onToolResult is always called for every announced tool call,
+    // preventing orphaned tool_use items in the conversation store.
     const results = await Promise.all(
       pendingToolCalls.map(async (tc) => {
-        const result = await toolRegistry.execute(tc.name, tc.input, signal);
-        result.toolCallId = tc.id;
-        onToolResult(result);
-        return result;
+        try {
+          const result = await toolRegistry.execute(tc.name, tc.input, signal);
+          result.toolCallId = tc.id;
+          onToolResult(result);
+          return result;
+        } catch (toolErr) {
+          const errResult = {
+            toolCallId: tc.id,
+            toolName: tc.name,
+            isError: true as const,
+            content: signal?.aborted
+              ? "Tool execution was cancelled."
+              : toolErr instanceof Error ? toolErr.message : String(toolErr),
+          };
+          onToolResult(errResult);
+          return errResult;
+        }
       }),
     );
+    hadToolsExecution = true;
+
+    // If the run was aborted, stop here rather than sending another LLM round.
+    if (signal?.aborted) {
+      onError(new DOMException("Run was aborted", "AbortError"));
+      return;
+    }
 
     // Add tool results as a user/tool message for the next round
     const resultContent: MessageContent[] = results.map((r) => ({

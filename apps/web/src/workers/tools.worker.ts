@@ -15,6 +15,8 @@ interface WorkerMessage {
   type: "exec" | "install";
   code?: string;
   packages?: string[];
+  /** OPFS workspace files path, e.g. "workspaces/ws-id/files" — if provided, new files are reported back */
+  workspaceFilesPath?: string;
 }
 
 interface WorkerResponse {
@@ -24,6 +26,8 @@ interface WorkerResponse {
   error?: string;
   text?: string;
   figures?: string[]; // base64 PNG data URIs
+  /** Files written by Python code: { filename -> base64-encoded bytes } */
+  outputFiles?: Record<string, string>;
 }
 
 function post(msg: WorkerResponse) {
@@ -112,8 +116,60 @@ except ImportError:
 
       await py.runPythonAsync(setupCode);
 
+      type PyFS = {
+        readdir(p: string): string[];
+        stat(p: string): { mode: number };
+        isDir(mode: number): boolean;
+        readFile(p: string): Uint8Array;
+      };
+
+      /** Recursively collect all file paths (not dirs) under `dir`, relative to `base`. */
+      function collectFilePaths(fs: PyFS, dir: string, base: string, out: Set<string>) {
+        let entries: string[];
+        try { entries = fs.readdir(dir); } catch { return; }
+        for (const entry of entries) {
+          if (entry === "." || entry === "..") continue;
+          const full = `${dir}/${entry}`;
+          const rel = base ? `${base}/${entry}` : entry;
+          try {
+            const stat = fs.stat(full);
+            if (fs.isDir(stat.mode)) {
+              collectFilePaths(fs, full, rel, out);
+            } else {
+              out.add(rel);
+            }
+          } catch { /* skip unreadable */ }
+        }
+      }
+
+      // Snapshot all file paths under Pyodide CWD before execution
+      const pyodideCwd = "/home/pyodide";
+      const pyFS = (py as unknown as { FS: PyFS }).FS;
+      const beforeFiles = new Set<string>();
+      collectFilePaths(pyFS, pyodideCwd, "", beforeFiles);
+
       // Execute user code
       const result = await py.runPythonAsync(code);
+
+      // Collect new files written by Python (recursive, preserves subdir structure)
+      const outputFiles: Record<string, string> = {};
+      try {
+        const afterFiles = new Set<string>();
+        collectFilePaths(pyFS, pyodideCwd, "", afterFiles);
+        for (const relPath of afterFiles) {
+          if (!beforeFiles.has(relPath)) {
+            try {
+              const bytes = pyFS.readFile(`${pyodideCwd}/${relPath}`);
+              // Convert Uint8Array to base64
+              let binary = "";
+              for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+              outputFiles[relPath] = btoa(binary);
+            } catch { /* skip unreadable */ }
+          }
+        }
+      } catch {
+        /* best-effort */
+      }
 
       // Collect any matplotlib figures
       const figuresPyObj = py.globals.get("_zenon_figures");
@@ -134,7 +190,7 @@ except ImportError:
         }
       }
 
-      post({ id, type: "result", result: jsResult, figures });
+      post({ id, type: "result", result: jsResult, figures, outputFiles });
     }
   } catch (e) {
     post({ id, type: "error", error: e instanceof Error ? e.message : String(e) });

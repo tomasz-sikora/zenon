@@ -101,7 +101,8 @@ Tools are called automatically by the model when it decides they are useful. You
 - Runs entirely in-browser via **Pyodide** (Python 3.12 WASM). No code leaves your machine.
 - `matplotlib` figures are automatically captured and displayed inline.
 - Call `micropip.install(["package"])` inside your code to install additional packages at runtime.
-- Execution is sandboxed — no filesystem access outside OPFS, no network access.
+- Execution is sandboxed — no network access from Python.
+- **Any files written by Python code are automatically saved to the current workspace** (e.g. CSVs, plots, model outputs). They appear in the Workspace file browser immediately.
 
 ---
 
@@ -109,14 +110,44 @@ Tools are called automatically by the model when it decides they are useful. You
 
 A workspace is an isolated container for conversations and files. Use workspaces to separate different projects.
 
-- Create a workspace from the workspace switcher in the sidebar.
-- Each workspace has its own **file browser** accessible via **Workspace** in the sidebar.
-- Files uploaded in one workspace are not visible in another.
-- File storage uses the browser's **Origin Private File System (OPFS)** — files persist across sessions but are not synced to any server.
+- File storage uses the browser's **Origin Private File System (OPFS)** — files persist across sessions but are never synced to any server.
+- Files in one workspace are not visible in another.
+
+### Managing workspaces
+
+Click the workspace name at the top of the **Workspace** file browser (or the **⚙ Manage** button) to open the workspace manager. From there you can:
+
+| Action | How |
+|---|---|
+| **Create** | Click **+ New Workspace**, enter a name |
+| **Switch** | Click any workspace in the list |
+| **Rename** | Click the pencil icon next to the name |
+| **Download** | Click the download icon to export the whole workspace as a `.tar.gz` archive |
+| **Delete** | Click the trash icon (cannot delete the active workspace) |
+
+The header bar also shows a live **file count** and **total size** for the current workspace.
 
 ### Uploading files
 
 In the file browser, click **Upload** to add files. Supported types include PDFs, images, CSV, Excel, Word documents, and plain text.
+
+### File preview
+
+Click any file to preview it inline:
+
+| File type | Preview |
+|---|---|
+| Plain text, Markdown, JSON, YAML, Python, JS, … | Syntax-highlighted code block |
+| CSV | Rendered table (first 50 rows) |
+| Images (PNG, JPG, GIF, WebP, SVG, …) | Inline image |
+| PDF | Embedded PDF viewer |
+| Binary / unknown | Download button only |
+
+To download an individual file, use the **Download** icon in the file row or in the preview panel.
+
+### Python → workspace integration
+
+When the `python_exec` tool creates files (e.g. `plt.savefig("chart.png")` or any `open("file.txt", "w")` write), they are **automatically saved to the current workspace**. You can find them in the file browser immediately after the code cell finishes executing.
 
 ---
 

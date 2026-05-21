@@ -41,15 +41,18 @@ export function messagesToOpenAI(
 ): Array<{ role: string; content: unknown }> {
   return messages
     .filter((m) => m.role !== "system")
-    .map((m) => {
+    .flatMap((m) => {
       if (m.role === "tool") {
-        const toolResult = m.content.find((c) => c.type === "tool_result");
-        if (toolResult?.type === "tool_result") {
-          return {
-            role: "tool",
-            tool_call_id: toolResult.toolCallId,
-            content: toolResult.content,
-          };
+        // OpenAI requires one `role:"tool"` message per tool call.
+        // Our internal store may pack multiple tool_result items into one message,
+        // so expand them here.
+        const toolResults = m.content.filter((c) => c.type === "tool_result");
+        if (toolResults.length > 0) {
+          return toolResults.map((c) => ({
+            role: "tool" as const,
+            tool_call_id: c.type === "tool_result" ? c.toolCallId : "",
+            content: c.type === "tool_result" ? c.content : "",
+          }));
         }
       }
 
@@ -58,31 +61,32 @@ export function messagesToOpenAI(
         const textBlocks = m.content.filter((c) => c.type === "text");
 
         if (toolUse.length > 0) {
-          return {
-            role: "assistant",
-            content: textBlocks.length > 0
-              ? textBlocks.map((b) => b.type === "text" ? b.text : "").join("")
-              : null,
-            tool_calls: toolUse
-              .filter((c) => c.type === "tool_use")
-              .map((c) => {
-                if (c.type !== "tool_use") return null;
-                return {
-                  id: c.toolCallId,
-                  type: "function",
-                  function: {
-                    name: c.toolName,
-                    arguments: JSON.stringify(c.toolInput),
-                  },
-                };
-              })
-              .filter(Boolean),
-          };
+          return [
+            {
+              role: "assistant" as const,
+              content: textBlocks.length > 0
+                ? textBlocks.map((b) => b.type === "text" ? b.text : "").join("")
+                : null,
+              tool_calls: toolUse
+                .filter((c) => c.type === "tool_use")
+                .map((c) => {
+                  if (c.type !== "tool_use") return null;
+                  return {
+                    id: c.toolCallId,
+                    type: "function",
+                    function: {
+                      name: c.toolName,
+                      arguments: JSON.stringify(c.toolInput),
+                    },
+                  };
+                })
+                .filter(Boolean),
+            },
+          ];
         }
       }
 
-      const content = buildOpenAIContent(m.content);
-      return { role: m.role, content };
+      return [{ role: m.role, content: buildOpenAIContent(m.content) }];
     });
 }
 

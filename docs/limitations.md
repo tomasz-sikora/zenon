@@ -16,7 +16,7 @@
 ### Pyodide (Python)
 - Cold start takes 3–10 seconds the first time Pyodide is loaded in a session.
 - Only packages available via `micropip` (pure-Python wheels) can be installed at runtime. C-extension packages (e.g. `scipy` with Fortran BLAS) must be pre-bundled in the Pyodide distribution.
-- No real filesystem access — Python code can only read/write through the OPFS bridge.
+- Files written by Python (e.g. `open("out.csv", "w")`) are automatically captured and saved to the current workspace after execution. Only files created during a single execution run are captured — files pre-existing in the Pyodide working directory before the run are ignored.
 - No network access from within Python code (WASM sandbox).
 - Maximum memory for Python is bounded by the browser tab's heap.
 

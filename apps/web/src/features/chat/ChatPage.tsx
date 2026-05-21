@@ -136,7 +136,7 @@ export default function ChatPage() {
   ) => {
     if (!agent) return;
 
-    const assistantMsgId = addMessage(activeConvId, {
+    let assistantMsgId = addMessage(activeConvId, {
       role: "assistant",
       content: [{ type: "text", text: "" }],
       modelId: selectedModelId,
@@ -179,6 +179,22 @@ export default function ChatPage() {
     // Accumulate thinking text and keep the thinking block in sync
     let thinkingAccumulator = "";
 
+    // After tool results arrive, the next model output should go in a *new* assistant
+    // message so it appears below the tool-result rows (ChatGPT-style layout).
+    let needNewAssistantMsg = false;
+    const ensureNewAssistantMsg = () => {
+      if (!needNewAssistantMsg) return;
+      needNewAssistantMsg = false;
+      thinkingAccumulator = "";
+      assistantMsgId = addMessage(activeConvId, {
+        role: "assistant",
+        content: [{ type: "text", text: "" }],
+        modelId: selectedModelId,
+        providerId: selectedProviderId,
+      });
+      setStreamingMsgId(assistantMsgId);
+    };
+
     try {
       await runAgent({
         conversation: {
@@ -190,6 +206,7 @@ export default function ChatPage() {
         signal: controller.signal,
 
         onThinking: (text) => {
+          ensureNewAssistantMsg();
           setAgentStatus("Reasoning…");
           thinkingAccumulator += text;
           const current = getConversation(activeConvId)?.messages.find(
@@ -216,11 +233,13 @@ export default function ChatPage() {
         },
 
         onChunk: (text) => {
+          ensureNewAssistantMsg();
           setAgentStatus("Responding…");
           appendToMessage(activeConvId, assistantMsgId, text);
         },
 
         onToolCall: (toolCall) => {
+          ensureNewAssistantMsg();
           setAgentStatus(`Calling ${toolCall.toolName}…`);
           appendAssistantBlock({
             type: "tool_use",
@@ -244,6 +263,8 @@ export default function ChatPage() {
               },
             ],
           });
+          // Next model output (summary / follow-up) goes in a fresh assistant message
+          needNewAssistantMsg = true;
         },
 
         onRetry: (attempt, maxAttempts, error) => {
@@ -268,6 +289,8 @@ export default function ChatPage() {
             .map((block) => (block.type === "text" ? block.text : ""))
             .join("") ?? "";
           const thinkingBlocks = currentMsg?.content.filter((b) => b.type === "thinking") ?? [];
+          // Keep tool_use blocks so existing tool-call bubbles stay visible
+          const toolUseBlocks = currentMsg?.content.filter((b) => b.type === "tool_use") ?? [];
 
           let errorText: string;
           let toastMsg: string | null = null;
@@ -294,6 +317,7 @@ export default function ChatPage() {
           updateMessage(activeConvId, assistantMsgId, {
             content: [
               ...thinkingBlocks,
+              ...toolUseBlocks,
               { type: "text", text: errorText },
             ],
           });
