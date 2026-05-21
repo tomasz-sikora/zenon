@@ -1,6 +1,7 @@
 import type { AIProvider, CompletionOptions, StreamCallback } from "./base";
 import { extractSystemPrompt } from "./base";
 import type { Message, MessageContent, ToolDefinition } from "@zenon/shared-types";
+import { generateId } from "../utils";
 
 export class GeminiProvider implements AIProvider {
   id = "gemini";
@@ -110,7 +111,7 @@ function emitGeminiResponse(data: GeminiResponse, onChunk: StreamCallback) {
       onChunk({ type: "text", text: part.text });
     }
     if (part.functionCall) {
-      const id = crypto.randomUUID();
+      const id = generateId();
       onChunk({
         type: "tool_call_end",
         toolCallId: id,
