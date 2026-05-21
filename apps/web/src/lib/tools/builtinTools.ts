@@ -2,6 +2,8 @@ import { toolRegistry } from "./registry";
 import type { ToolResult } from "@zenon/shared-types";
 import { isAskUserQuestionType } from "./askUser";
 
+const MAX_ASK_USER_OPTIONS = 12;
+
 /** fetch_webpage tool — reads a URL and returns readable text */
 toolRegistry.register({
   definition: {
@@ -150,7 +152,7 @@ toolRegistry.register({
     const rawOptions = Array.isArray(input.options)
       ? input.options.filter((opt): opt is string => typeof opt === "string")
       : [];
-    let options = rawOptions.map((opt) => opt.trim()).filter(Boolean).slice(0, 12);
+    let options = rawOptions.map((opt) => opt.trim()).filter(Boolean).slice(0, MAX_ASK_USER_OPTIONS);
     if (questionType === "confirm" && options.length === 0) {
       options = ["Yes", "No"];
     }
