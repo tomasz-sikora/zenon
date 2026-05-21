@@ -57,13 +57,19 @@ An **agent** combines:
 
 ### Built-in agents
 
+All built-in agents include **Python execution** plus **workspace file operation tools** (`read_file`, `write_file`, `list_files`, `append_file`, `delete_file`) by default.
+
 | Agent | Description |
 |---|---|
-| General Assistant | Helpful assistant with web fetch and datetime tools |
-| Python Coder | Writes and executes Python in a WASM sandbox |
-| Web Researcher | Fetches and summarises web pages |
-| Document Analyst | Answers questions from indexed documents via RAG |
-| Data Analyst | Processes CSV/Excel, runs Python, creates charts |
+| General Assistant | General helper with web/date/math tools plus Python + workspace file ops |
+| Python Coder | Code-focused Python agent with execution and package install support |
+| Web Researcher | Researches web sources and can compile notes in workspace files |
+| Document Analyst | Uses RAG + document readers to answer with citations |
+| Data Analyst | Processes CSV/Excel, runs Python, creates charts/diagrams |
+| Office Assistant | Works with PDF/Word/Excel and generates polished deliverables |
+| Workflow Designer | Creates process plans, diagrams, and implementation assets |
+
+Built-ins also include **example skill files** you can inspect and adapt when creating custom agents.
 
 ### Creating a custom agent
 

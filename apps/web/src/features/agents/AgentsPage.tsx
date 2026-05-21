@@ -13,7 +13,7 @@ import {
   Search,
   FileText,
 } from "lucide-react";
-import { useAgentStore } from "@/store/agentStore";
+import { useAgentStore, DEFAULT_AGENT_TOOLS } from "@/store/agentStore";
 import { useProviderStore } from "@/store/providerStore";
 import { useWorkspaceStore } from "@/store/workspaceStore";
 import { cn } from "@/lib/utils";
@@ -48,7 +48,7 @@ function AgentBuilder({ initial, onClose, onSave }: AgentBuilderProps) {
   const [instructions, setInstructions] = useState(initial?.instructions ?? "");
   const [providerId, setProviderId] = useState(initial?.model.providerId ?? providers[0]?.id ?? "openai");
   const [modelId, setModelId] = useState(initial?.model.modelId ?? "gpt-4o");
-  const [selectedTools, setSelectedTools] = useState<string[]>(initial?.tools ?? []);
+  const [selectedTools, setSelectedTools] = useState<string[]>(initial?.tools ?? DEFAULT_AGENT_TOOLS);
   const [ragEnabled, setRagEnabled] = useState(initial?.ragEnabled ?? false);
   const [tags, setTags] = useState((initial?.tags ?? []).join(", "));
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
