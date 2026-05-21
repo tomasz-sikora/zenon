@@ -145,7 +145,11 @@ export interface Chunk {
 }
 
 export function chunkText(text: string, source: string, chunkSize = 500, overlap = 50): Chunk[] {
-  const sentences = text.match(/[^.!?\n]+[.!?\n]+/g) ?? [text];
+  // Match sentences; capture trailing text that doesn't end with punctuation
+  const matched = text.match(/[^.!?\n]+[.!?\n]+/g) ?? [];
+  const lastMatchEnd = matched.reduce((pos, s) => pos + s.length, 0);
+  const remainder = text.slice(lastMatchEnd).trim();
+  const sentences = remainder ? [...matched, remainder] : (matched.length > 0 ? matched : [text]);
   const chunks: Chunk[] = [];
   let current = "";
   let chunkIndex = 0;
@@ -324,12 +328,24 @@ export async function queryCsvTable(
     rows = rows.filter((row) => {
       const val = row[filter.column] ?? "";
       switch (filter.operator) {
-        case "=": case "==": return val === filter.value;
+        case "=": return val === filter.value;
         case "!=": return val !== filter.value;
-        case ">": return Number(val) > Number(filter.value);
-        case "<": return Number(val) < Number(filter.value);
-        case ">=": return Number(val) >= Number(filter.value);
-        case "<=": return Number(val) <= Number(filter.value);
+        case ">": {
+          const nv = Number(val), nf = Number(filter.value);
+          return !isNaN(nv) && !isNaN(nf) && nv > nf;
+        }
+        case "<": {
+          const nv = Number(val), nf = Number(filter.value);
+          return !isNaN(nv) && !isNaN(nf) && nv < nf;
+        }
+        case ">=": {
+          const nv = Number(val), nf = Number(filter.value);
+          return !isNaN(nv) && !isNaN(nf) && nv >= nf;
+        }
+        case "<=": {
+          const nv = Number(val), nf = Number(filter.value);
+          return !isNaN(nv) && !isNaN(nf) && nv <= nf;
+        }
         case "LIKE": case "like": return val.toLowerCase().includes(filter.value.toLowerCase());
         default: return val === filter.value;
       }

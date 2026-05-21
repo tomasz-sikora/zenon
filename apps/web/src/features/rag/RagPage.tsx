@@ -146,7 +146,7 @@ export default function RagPage() {
 
       {/* Config summary */}
       <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-        <span className="px-2 py-0.5 rounded bg-muted">Model: {embeddingModelId.split("/").pop()}</span>
+        <span className="px-2 py-0.5 rounded bg-muted">Model: {embeddingModelId?.split("/").pop() ?? "default"}</span>
         <span className="px-2 py-0.5 rounded bg-muted">Chunks: {chunking.chunkSize} / {chunking.overlap}</span>
         <span className="px-2 py-0.5 rounded bg-muted">CSV: {csvHandling === "sql" ? "SQL" : "Chunks"}</span>
       </div>
