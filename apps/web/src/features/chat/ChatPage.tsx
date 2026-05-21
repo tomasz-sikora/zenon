@@ -1,6 +1,6 @@
 import { useParams, useOutletContext, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, PanelLeft, Wrench, ChevronDown, Bot, BookOpen, Download, Plus } from "lucide-react";
+import { AlertTriangle, Check, Loader2, PanelLeft, Wrench, ChevronDown, Bot, BookOpen, Download, Plus } from "lucide-react";
 import { useConversationStore } from "@/store/conversationStore";
 import { useAgentStore } from "@/store/agentStore";
 import { useProviderStore } from "@/store/providerStore";
@@ -11,6 +11,7 @@ import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { ModelSelector } from "./ModelSelector";
 import { runAgent } from "@/lib/agent/runner";
+import { toast } from "@/components/ui/Toaster";
 import type { Message } from "@zenon/shared-types";
 import { cn } from "@/lib/utils";
 import { toolRegistry } from "@/lib/tools/registry";
@@ -267,18 +268,36 @@ export default function ChatPage() {
             .map((block) => (block.type === "text" ? block.text : ""))
             .join("") ?? "";
           const thinkingBlocks = currentMsg?.content.filter((b) => b.type === "thinking") ?? [];
+
+          let errorText: string;
+          let toastMsg: string | null = null;
+
+          if (error.name === "AbortError") {
+            errorText = `${currentText} _(stopped)_`.trim();
+          } else if (error instanceof TypeError && error.message.toLowerCase().includes("fetch")) {
+            // Network/CORS failure — provide specific guidance
+            errorText = `${currentText}\n\n❌ **Connection failed** — could not reach the AI provider.\n\nPossible causes:\n- No internet connection\n- Invalid or missing API key (check Settings)\n- Provider service is down`.trim();
+            toastMsg = "Connection failed — check your API key and network";
+          } else if (error.message.includes("401") || error.message.toLowerCase().includes("unauthorized") || error.message.toLowerCase().includes("invalid api key")) {
+            errorText = `${currentText}\n\n❌ **Authentication failed (401)** — your API key is invalid or expired.\n\nGo to Settings → Providers and update the key.`.trim();
+            toastMsg = "Invalid API key — update it in Settings → Providers";
+          } else if (error.message.includes("429") || error.message.toLowerCase().includes("rate limit")) {
+            errorText = `${currentText}\n\n❌ **Rate limit hit (429)** — too many requests. Please wait a moment and retry.`.trim();
+            toastMsg = "Rate limit reached — please wait before retrying";
+          } else if (error.message.includes("No API key")) {
+            errorText = `${currentText}\n\n❌ **No API key configured.**\n\nGo to Settings → Providers and add a key for this provider.`.trim();
+            toastMsg = error.message;
+          } else {
+            errorText = `${currentText}\n\n❌ ${error.message}`.trim();
+          }
+
           updateMessage(activeConvId, assistantMsgId, {
             content: [
               ...thinkingBlocks,
-              {
-                type: "text",
-                text:
-                  error.name === "AbortError"
-                    ? `${currentText} _(stopped)_`.trim()
-                    : `${currentText}\n\n❌ ${error.message}`.trim(),
-              },
+              { type: "text", text: errorText },
             ],
           });
+          if (toastMsg) toast.error("Request failed", toastMsg);
           setIsStreaming(false);
           setStreamingMsgId(null);
           setAgentStatus(null);
@@ -406,7 +425,25 @@ export default function ChatPage() {
 
         <div className="flex items-center gap-2 ml-auto">
           {agentStatus && (
-            <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground animate-pulse">
+            <span className={cn(
+              "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
+              agentStatus.startsWith("Error") || agentStatus.startsWith("❌")
+                ? "bg-destructive/10 text-destructive"
+                : agentStatus.startsWith("Responding")
+                  ? "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
+                  : agentStatus.startsWith("Reasoning")
+                    ? "bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300"
+                    : agentStatus.startsWith("Calling") || agentStatus.startsWith("Done")
+                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                      : "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+            )}>
+              {agentStatus.startsWith("Error") ? (
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+              ) : agentStatus.startsWith("Done") ? (
+                <Check className="h-3 w-3 shrink-0" />
+              ) : (
+                <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+              )}
               {agentStatus}
             </span>
           )}

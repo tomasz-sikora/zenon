@@ -27,30 +27,28 @@ export function createProvider(
         apiKey,
       };
       if (config.baseUrl) providerOpts.baseUrl = config.baseUrl;
-      // Route openai-compatible providers with absolute URLs through the built-in proxy
-      // to avoid CORS errors. Relative paths (e.g. /ollama/v1) go direct.
-      if (
-        config.type === "openai-compatible" &&
-        config.baseUrl &&
-        (config.baseUrl.startsWith("http://") || config.baseUrl.startsWith("https://"))
-      ) {
+      // Always route through the built-in proxy for absolute URLs to avoid CORS.
+      // Relative paths (e.g. /ollama/v1) are served by nginx on the same origin — no CORS.
+      const isAbsolute = !config.baseUrl || config.baseUrl.startsWith("http://") || config.baseUrl.startsWith("https://");
+      if (isAbsolute) {
         providerOpts.proxyUrl = "/api/chat";
       }
       return new OpenAIProvider(providerOpts);
     }
 
     case "anthropic": {
-      const anthropicOpts: { id: string; name: string; apiKey: string; proxyUrl?: string } = {
+      // Always route through local proxy — Anthropic doesn't allow direct browser requests.
+      return new AnthropicProvider({
         id: config.id,
         name: config.name,
         apiKey,
-      };
-      if (proxyBaseUrl) anthropicOpts.proxyUrl = proxyBaseUrl;
-      return new AnthropicProvider(anthropicOpts);
+        // proxyUrl defaults to "/api/anthropic" inside AnthropicProvider
+      });
     }
 
     case "gemini":
-      return new GeminiProvider(apiKey);
+      // Always route through local proxy — Google's API doesn't set CORS headers for browsers.
+      return new GeminiProvider({ apiKey, proxyUrl: "/api/gemini" });
 
     case "bedrock":
       // Bedrock requires SigV4 signing — always use proxy

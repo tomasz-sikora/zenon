@@ -56,12 +56,19 @@ async function sendRequest<T>(
     params,
   };
 
-  const response = await fetch(url, {
+  // Route through the local proxy to avoid CORS when calling external MCP servers.
+  // The proxy reads X-MCP-URL and X-MCP-Headers and forwards the JSON-RPC request.
+  const proxyHeaders: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-MCP-URL": url,
+  };
+  if (headers && Object.keys(headers).length > 0) {
+    proxyHeaders["X-MCP-Headers"] = JSON.stringify(headers);
+  }
+
+  const response = await fetch("/api/mcp", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...headers,
-    },
+    headers: proxyHeaders,
     body: JSON.stringify(request),
   });
 

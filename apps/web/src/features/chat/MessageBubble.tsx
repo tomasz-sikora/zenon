@@ -156,6 +156,15 @@ function ContentBlock({
   }
 
   if (block.type === "text") {
+    // Show animated typing dots while waiting for the first token
+    if (!block.text && isStreaming) {
+      return (
+        <div className="rounded-2xl rounded-tl-sm bg-muted/60 px-4 py-3">
+          <TypingDots />
+        </div>
+      );
+    }
+
     return (
       <div
         className={cn(
@@ -209,6 +218,22 @@ function ContentBlock({
 
   // tool_result is rendered inside ToolCallCard — never directly
   return null;
+}
+
+// ─── Typing dots (waiting for first token) ───────────────────────────────────
+
+function TypingDots() {
+  return (
+    <div className="flex items-center gap-1" aria-label="Typing…">
+      {[0, 1, 2].map((i) => (
+        <span
+          key={i}
+          className="h-2 w-2 rounded-full bg-muted-foreground/50 animate-bounce"
+          style={{ animationDelay: `${i * 150}ms`, animationDuration: "0.9s" }}
+        />
+      ))}
+    </div>
+  );
 }
 
 // ─── Thinking block ───────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ export declare class LocalWebGPUProvider implements AIProvider {
         name: string;
     });
     static getWorker(): Worker;
-    static isLoaded(): boolean;
+    static isLoaded(modelId: string): boolean;
     preload(onProgress: (msg: {
         status: string;
         file?: string;
@@ -18,7 +18,7 @@ export declare class LocalWebGPUProvider implements AIProvider {
         total?: number;
         data?: string;
         progress?: number;
-    }) => void): Promise<void>;
+    }) => void, modelId?: string): Promise<void>;
     complete(opts: CompletionOptions, onChunk: StreamCallback): Promise<void>;
 }
 export declare const localWebGPUProvider: LocalWebGPUProvider;

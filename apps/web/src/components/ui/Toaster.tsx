@@ -1,6 +1,7 @@
 import { useState, useCallback, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { generateId } from "@/lib/utils";
 
 interface Toast {
   id: string;
@@ -25,11 +26,11 @@ export function Toaster() {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const addToast = useCallback((t: Omit<Toast, "id">) => {
-    const id = crypto.randomUUID();
+    const id = generateId();
     setToasts((prev) => [...prev, { ...t, id }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((x) => x.id !== id));
-    }, 4000);
+    }, 5000);
   }, []);
 
   // Register globally
