@@ -1,14 +1,23 @@
 import type { AIProvider, CompletionOptions, StreamCallback } from "./base";
 import { extractSystemPrompt } from "./base";
 import type { Message, MessageContent, ToolDefinition } from "@zenon/shared-types";
+import { generateId } from "../utils";
 
 export class GeminiProvider implements AIProvider {
   id = "gemini";
   name = "Google Gemini";
   private apiKey: string;
+  /** Proxy base path to avoid CORS — defaults to "/api/gemini" */
+  private proxyUrl: string;
 
-  constructor(apiKey: string) {
-    this.apiKey = apiKey;
+  constructor(opts: string | { apiKey: string; proxyUrl?: string }) {
+    if (typeof opts === "string") {
+      this.apiKey = opts;
+      this.proxyUrl = "/api/gemini";
+    } else {
+      this.apiKey = opts.apiKey;
+      this.proxyUrl = opts.proxyUrl ?? "/api/gemini";
+    }
   }
 
   async complete(
@@ -39,11 +48,15 @@ export class GeminiProvider implements AIProvider {
 
     const stream = opts.stream !== false;
     const endpoint = stream ? "streamGenerateContent" : "generateContent";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:${endpoint}?key=${this.apiKey}${stream ? "&alt=sse" : ""}`;
+    // Route through proxy to avoid CORS — proxy forwards to Google with the API key
+    const url = `${this.proxyUrl}/models/${modelId}:${endpoint}${stream ? "?alt=sse" : ""}`;
 
     const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-Gemini-API-Key": this.apiKey,
+      },
       body: JSON.stringify(body),
       signal: opts.signal ?? null,
     });
@@ -110,7 +123,7 @@ function emitGeminiResponse(data: GeminiResponse, onChunk: StreamCallback) {
       onChunk({ type: "text", text: part.text });
     }
     if (part.functionCall) {
-      const id = crypto.randomUUID();
+      const id = generateId();
       onChunk({
         type: "tool_call_end",
         toolCallId: id,

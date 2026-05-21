@@ -24,6 +24,15 @@ vite.config.js
 # TypeScript declaration caches
 *.d.ts.map
 
+# TypeScript compiled output files in src/ (tsc --outDir or tsc -b side-effects)
+apps/web/src/**/*.js
+apps/web/src/**/*.d.ts
+apps/proxy/src/**/*.js
+apps/proxy/src/**/*.d.ts
+# but keep vite and tailwind configs
+!apps/web/tailwind.config.js
+!apps/web/postcss.config.js
+
 # Docker build context
 docker-compose.override.yml
 

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { ProviderConfig, ModelInfo } from "@zenon/shared-types";
+import { generateId } from "../lib/utils";
 
 interface ProviderStore {
   providers: ProviderConfig[];
@@ -203,7 +204,7 @@ export const useProviderStore = create<ProviderStore>()(
       },
 
       addCustomProvider: (config) => {
-        const id = crypto.randomUUID();
+          const id = generateId();
         set((s) => ({
           providers: [...s.providers, { ...config, id }],
         }));

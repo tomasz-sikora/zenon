@@ -10,17 +10,22 @@ export class OpenAIProvider implements AIProvider {
   name: string;
   private baseUrl: string;
   private apiKey: string;
+  /** When set, requests are routed through this proxy path to avoid CORS */
+  private proxyUrl?: string;
 
   constructor(opts: {
     id: string;
     name: string;
     baseUrl?: string;
     apiKey: string;
+    /** Optional proxy path (e.g. "/api/chat") — routes requests server-side */
+    proxyUrl?: string;
   }) {
     this.id = opts.id;
     this.name = opts.name;
     this.baseUrl = opts.baseUrl ?? "https://api.openai.com/v1";
     this.apiKey = opts.apiKey;
+    this.proxyUrl = opts.proxyUrl;
   }
 
   async complete(
@@ -53,8 +58,15 @@ export class OpenAIProvider implements AIProvider {
     if (this.apiKey) {
       headers.Authorization = `Bearer ${this.apiKey}`;
     }
+    // When routing through the proxy, pass the real provider URL as a header
+    const endpoint = this.proxyUrl
+      ? `${this.proxyUrl}/completions`
+      : `${this.baseUrl}/chat/completions`;
+    if (this.proxyUrl) {
+      headers["X-Provider-Base-URL"] = this.baseUrl;
+    }
 
-    const resp = await fetch(`${this.baseUrl}/chat/completions`, {
+    const resp = await fetch(endpoint, {
       method: "POST",
       headers,
       body: JSON.stringify(body),

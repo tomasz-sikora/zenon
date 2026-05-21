@@ -6,19 +6,20 @@ export class AnthropicProvider implements AIProvider {
   id: string;
   name: string;
   private apiKey: string;
-  /** If set, requests go through the proxy (avoids CORS) */
-  private proxyUrl?: string;
+  /** Proxy base path — defaults to "/api/anthropic" (local nginx proxy) to avoid CORS */
+  private proxyUrl: string;
 
   constructor(opts: {
     id: string;
     name: string;
     apiKey: string;
+    /** Override proxy base. Defaults to "/api/anthropic". Pass "" to go direct (not recommended). */
     proxyUrl?: string;
   }) {
     this.id = opts.id;
     this.name = opts.name;
     this.apiKey = opts.apiKey;
-    this.proxyUrl = opts.proxyUrl;
+    this.proxyUrl = opts.proxyUrl ?? "/api/anthropic";
   }
 
   async complete(
@@ -46,9 +47,7 @@ export class AnthropicProvider implements AIProvider {
       }));
     }
 
-    const url = this.proxyUrl
-      ? `${this.proxyUrl}/api/anthropic/messages`
-      : "https://api.anthropic.com/v1/messages";
+    const url = `${this.proxyUrl}/messages`;
 
     const resp = await fetch(url, {
       method: "POST",

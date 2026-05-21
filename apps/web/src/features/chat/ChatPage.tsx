@@ -1,6 +1,6 @@
 import { useParams, useOutletContext, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, PanelLeft, Wrench, ChevronDown, Bot, BookOpen } from "lucide-react";
+import { AlertTriangle, Check, Loader2, PanelLeft, Wrench, ChevronDown, Bot, BookOpen, Download, Plus } from "lucide-react";
 import { useConversationStore } from "@/store/conversationStore";
 import { useAgentStore } from "@/store/agentStore";
 import { useProviderStore } from "@/store/providerStore";
@@ -11,6 +11,7 @@ import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { ModelSelector } from "./ModelSelector";
 import { runAgent } from "@/lib/agent/runner";
+import { toast } from "@/components/ui/Toaster";
 import type { Message } from "@zenon/shared-types";
 import { cn } from "@/lib/utils";
 import { toolRegistry } from "@/lib/tools/registry";
@@ -267,18 +268,36 @@ export default function ChatPage() {
             .map((block) => (block.type === "text" ? block.text : ""))
             .join("") ?? "";
           const thinkingBlocks = currentMsg?.content.filter((b) => b.type === "thinking") ?? [];
+
+          let errorText: string;
+          let toastMsg: string | null = null;
+
+          if (error.name === "AbortError") {
+            errorText = `${currentText} _(stopped)_`.trim();
+          } else if (error instanceof TypeError && error.message.toLowerCase().includes("fetch")) {
+            // Network/CORS failure — provide specific guidance
+            errorText = `${currentText}\n\n❌ **Connection failed** — could not reach the AI provider.\n\nPossible causes:\n- No internet connection\n- Invalid or missing API key (check Settings)\n- Provider service is down`.trim();
+            toastMsg = "Connection failed — check your API key and network";
+          } else if (error.message.includes("401") || error.message.toLowerCase().includes("unauthorized") || error.message.toLowerCase().includes("invalid api key")) {
+            errorText = `${currentText}\n\n❌ **Authentication failed (401)** — your API key is invalid or expired.\n\nGo to Settings → Providers and update the key.`.trim();
+            toastMsg = "Invalid API key — update it in Settings → Providers";
+          } else if (error.message.includes("429") || error.message.toLowerCase().includes("rate limit")) {
+            errorText = `${currentText}\n\n❌ **Rate limit hit (429)** — too many requests. Please wait a moment and retry.`.trim();
+            toastMsg = "Rate limit reached — please wait before retrying";
+          } else if (error.message.includes("No API key")) {
+            errorText = `${currentText}\n\n❌ **No API key configured.**\n\nGo to Settings → Providers and add a key for this provider.`.trim();
+            toastMsg = error.message;
+          } else {
+            errorText = `${currentText}\n\n❌ ${error.message}`.trim();
+          }
+
           updateMessage(activeConvId, assistantMsgId, {
             content: [
               ...thinkingBlocks,
-              {
-                type: "text",
-                text:
-                  error.name === "AbortError"
-                    ? `${currentText} _(stopped)_`.trim()
-                    : `${currentText}\n\n❌ ${error.message}`.trim(),
-              },
+              { type: "text", text: errorText },
             ],
           });
+          if (toastMsg) toast.error("Request failed", toastMsg);
           setIsStreaming(false);
           setStreamingMsgId(null);
           setAgentStatus(null);
@@ -363,6 +382,33 @@ export default function ChatPage() {
 
   const messages = conversation?.messages ?? [];
 
+  const handleExport = () => {
+    if (!conversation || messages.length === 0) return;
+    const title = conversation.title || "conversation";
+    const lines: string[] = [`# ${title}`, ""];
+    for (const msg of messages) {
+      if (msg.role === "system" || msg.role === "tool") continue;
+      const roleLabel = msg.role === "user" ? "**You**" : `**Assistant** _(${msg.modelId ?? "AI"})_`;
+      lines.push(`### ${roleLabel}`);
+      for (const block of msg.content) {
+        if (block.type === "text") lines.push(block.text);
+        else if (block.type === "thinking") lines.push(`> 💭 _Reasoning:_\n> ${block.thinking.replace(/\n/g, "\n> ")}`);
+        else if (block.type === "tool_use") lines.push(`> 🔧 \`${block.toolName}\``);
+      }
+      if (msg.usage) {
+        lines.push(``, `_↑${msg.usage.inputTokens} ↓${msg.usage.outputTokens} tokens_`);
+      }
+      lines.push("");
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="flex h-full flex-col">
       {/* Toolbar */}
@@ -379,9 +425,37 @@ export default function ChatPage() {
 
         <div className="flex items-center gap-2 ml-auto">
           {agentStatus && (
-            <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground animate-pulse">
+            <span className={cn(
+              "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
+              agentStatus.startsWith("Error") || agentStatus.startsWith("❌")
+                ? "bg-destructive/10 text-destructive"
+                : agentStatus.startsWith("Responding")
+                  ? "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
+                  : agentStatus.startsWith("Reasoning")
+                    ? "bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300"
+                    : agentStatus.startsWith("Calling") || agentStatus.startsWith("Done")
+                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                      : "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+            )}>
+              {agentStatus.startsWith("Error") ? (
+                <AlertTriangle className="h-3 w-3 shrink-0" />
+              ) : agentStatus.startsWith("Done") ? (
+                <Check className="h-3 w-3 shrink-0" />
+              ) : (
+                <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+              )}
               {agentStatus}
             </span>
+          )}
+          {messages.length > 0 && (
+            <button
+              onClick={handleExport}
+              className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+              aria-label="Export conversation"
+              title="Download conversation as Markdown"
+            >
+              <Download className="h-4 w-4" />
+            </button>
           )}
           <AgentSelector
             agents={agents}
@@ -708,6 +782,7 @@ interface SkillSelectorProps {
 function SkillSelector({ skills, selectedSkillIds, onChange }: SkillSelectorProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
   const selected = new Set(selectedSkillIds);
 
   useEffect(() => {
@@ -758,7 +833,7 @@ function SkillSelector({ skills, selectedSkillIds, onChange }: SkillSelectorProp
           <div className="max-h-72 overflow-y-auto py-1">
             {skills.length === 0 ? (
               <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-                No skills defined. Add skills in Settings → Skills.
+                No skills defined yet.
               </div>
             ) : (
               skills.map((skill) => (
@@ -782,6 +857,16 @@ function SkillSelector({ skills, selectedSkillIds, onChange }: SkillSelectorProp
                 </button>
               ))
             )}
+          </div>
+          {/* Footer: link to add a new skill */}
+          <div className="border-t border-border px-3 py-2">
+            <button
+              onClick={() => { setOpen(false); void navigate("/settings", { state: { tab: "skills" } }); }}
+              className="flex w-full items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add new skill…
+            </button>
           </div>
         </div>
       )}
