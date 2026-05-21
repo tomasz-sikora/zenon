@@ -1,6 +1,6 @@
 import { useParams, useOutletContext, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Check, Loader2, PanelLeft, Wrench, ChevronDown, Bot, BookOpen, Download, Plus } from "lucide-react";
+import { AlertTriangle, Check, Loader2, PanelLeft, Wrench, ChevronDown, Bot, BookOpen, Download, Plus, FolderOpen } from "lucide-react";
 import { useConversationStore } from "@/store/conversationStore";
 import { useAgentStore } from "@/store/agentStore";
 import { useProviderStore } from "@/store/providerStore";
@@ -10,11 +10,22 @@ import { useSkillStore } from "@/store/skillStore";
 import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import { ModelSelector } from "./ModelSelector";
+import { WorkspaceFilePanel } from "./WorkspaceFilePanel";
 import { runAgent } from "@/lib/agent/runner";
 import { toast } from "@/components/ui/Toaster";
 import type { Message } from "@zenon/shared-types";
 import { cn } from "@/lib/utils";
 import { toolRegistry } from "@/lib/tools/registry";
+
+/** Tool names that interact with the workspace file system. */
+const WORKSPACE_TOOL_NAMES = new Set([
+  "read_file",
+  "write_file",
+  "list_files",
+  "delete_file",
+  "append_file",
+  "run_python",
+]);
 
 interface OutletContext {
   sidebarOpen: boolean;
@@ -90,6 +101,10 @@ export default function ChatPage() {
   // null = use global enabled state; array = per-conversation override
   const [selectedSkillIds, setSelectedSkillIds] = useState<string[] | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Workspace file panel (right-side panel)
+  const [filesPanelOpen, setFilesPanelOpen] = useState(false);
+  const [filesPanelRefreshKey, setFilesPanelRefreshKey] = useState(0);
 
   const conversation = conversationId ? getConversation(conversationId) : null;
   const agent = conversation?.agentId
@@ -247,6 +262,10 @@ export default function ChatPage() {
             toolName: toolCall.toolName,
             toolInput: toolCall.input,
           });
+          // Auto-open the workspace file panel when a workspace tool is invoked
+          if (WORKSPACE_TOOL_NAMES.has(toolCall.toolName)) {
+            setFilesPanelOpen(true);
+          }
         },
 
         onToolResult: (result) => {
@@ -263,6 +282,10 @@ export default function ChatPage() {
               },
             ],
           });
+          // Refresh the workspace file panel after a workspace tool completes
+          if (WORKSPACE_TOOL_NAMES.has(result.toolName)) {
+            setFilesPanelRefreshKey((k) => k + 1);
+          }
           // Next model output (summary / follow-up) goes in a fresh assistant message
           needNewAssistantMsg = true;
         },
@@ -434,141 +457,164 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-        {!sidebarOpen && (
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-            aria-label="Open sidebar"
-          >
-            <PanelLeft className="h-4 w-4" />
-          </button>
-        )}
-
-        <div className="flex items-center gap-2 ml-auto">
-          {agentStatus && (
-            <span className={cn(
-              "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
-              agentStatus.startsWith("Error") || agentStatus.startsWith("❌")
-                ? "bg-destructive/10 text-destructive"
-                : agentStatus.startsWith("Responding")
-                  ? "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
-                  : agentStatus.startsWith("Reasoning")
-                    ? "bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300"
-                    : agentStatus.startsWith("Calling") || agentStatus.startsWith("Done")
-                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
-                      : "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
-            )}>
-              {agentStatus.startsWith("Error") ? (
-                <AlertTriangle className="h-3 w-3 shrink-0" />
-              ) : agentStatus.startsWith("Done") ? (
-                <Check className="h-3 w-3 shrink-0" />
-              ) : (
-                <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-              )}
-              {agentStatus}
-            </span>
-          )}
-          {messages.length > 0 && (
+    <div className="flex h-full overflow-hidden">
+      {/* Main chat area */}
+      <div className="flex flex-1 flex-col overflow-hidden min-w-0">
+        {/* Toolbar */}
+        <div className="flex items-center gap-2 border-b border-border px-4 py-2">
+          {!sidebarOpen && (
             <button
-              onClick={handleExport}
+              onClick={() => setSidebarOpen(true)}
               className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
-              aria-label="Export conversation"
-              title="Download conversation as Markdown"
+              aria-label="Open sidebar"
             >
-              <Download className="h-4 w-4" />
+              <PanelLeft className="h-4 w-4" />
             </button>
           )}
-          <AgentSelector
-            agents={agents}
-            selectedAgentId={conversation?.agentId ?? "general"}
-            disabled={isStreaming}
-            onChange={(agentId) => {
-              if (conversationId) {
-                setConversationAgent(conversationId, agentId);
-              }
-              setSelectedTools(getAgent(agentId)?.tools ?? []);
-            }}
-          />
-          <SkillSelector
-            skills={allSkills}
-            selectedSkillIds={selectedSkillIds ?? allSkills.filter((s) => s.enabled).map((s) => s.id)}
-            onChange={setSelectedSkillIds}
-          />
-          <ToolSelector
-            tools={availableTools}
-            selectedTools={selectedTools}
-            mcpServers={mcpServers}
-            onChange={setSelectedTools}
-          />
-          <ModelSelector
-            selectedProviderId={selectedProviderId}
-            selectedModelId={selectedModelId}
-            onSelect={setSelectedModel}
-          />
+
+          <div className="flex items-center gap-2 ml-auto">
+            {agentStatus && (
+              <span className={cn(
+                "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
+                agentStatus.startsWith("Error") || agentStatus.startsWith("❌")
+                  ? "bg-destructive/10 text-destructive"
+                  : agentStatus.startsWith("Responding")
+                    ? "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
+                    : agentStatus.startsWith("Reasoning")
+                      ? "bg-purple-100 text-purple-700 dark:bg-purple-950/40 dark:text-purple-300"
+                      : agentStatus.startsWith("Calling") || agentStatus.startsWith("Done")
+                        ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                        : "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+              )}>
+                {agentStatus.startsWith("Error") ? (
+                  <AlertTriangle className="h-3 w-3 shrink-0" />
+                ) : agentStatus.startsWith("Done") ? (
+                  <Check className="h-3 w-3 shrink-0" />
+                ) : (
+                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+                )}
+                {agentStatus}
+              </span>
+            )}
+            {messages.length > 0 && (
+              <button
+                onClick={handleExport}
+                className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+                aria-label="Export conversation"
+                title="Download conversation as Markdown"
+              >
+                <Download className="h-4 w-4" />
+              </button>
+            )}
+            {/* Toggle workspace file panel */}
+            <button
+              onClick={() => setFilesPanelOpen((v) => !v)}
+              className={cn(
+                "p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground",
+                filesPanelOpen && "bg-accent text-foreground",
+              )}
+              aria-label={filesPanelOpen ? "Close workspace file panel" : "Open workspace file panel"}
+              title="Workspace files"
+            >
+              <FolderOpen className="h-4 w-4" />
+            </button>
+            <AgentSelector
+              agents={agents}
+              selectedAgentId={conversation?.agentId ?? "general"}
+              disabled={isStreaming}
+              onChange={(agentId) => {
+                if (conversationId) {
+                  setConversationAgent(conversationId, agentId);
+                }
+                setSelectedTools(getAgent(agentId)?.tools ?? []);
+              }}
+            />
+            <SkillSelector
+              skills={allSkills}
+              selectedSkillIds={selectedSkillIds ?? allSkills.filter((s) => s.enabled).map((s) => s.id)}
+              onChange={setSelectedSkillIds}
+            />
+            <ToolSelector
+              tools={availableTools}
+              selectedTools={selectedTools}
+              mcpServers={mcpServers}
+              onChange={setSelectedTools}
+            />
+            <ModelSelector
+              selectedProviderId={selectedProviderId}
+              selectedModelId={selectedModelId}
+              onSelect={setSelectedModel}
+            />
+          </div>
         </div>
+
+        {isLocalWebGPUSelected && (
+          <div className="border-b border-border bg-muted/30 px-4 py-2 text-xs">
+            {webGPUSupported === false ? (
+              <div className="flex items-center gap-2 text-destructive">
+                <Bot className="h-3.5 w-3.5" />
+                WebGPU is not supported in this browser.
+              </div>
+            ) : localModelStatus === "loading" ? (
+              <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                <Bot className="h-3.5 w-3.5 animate-pulse" />
+                <span>{localModelLoadingText || "Loading local model…"}</span>
+                <span className="rounded bg-background px-2 py-0.5 font-mono text-[10px] text-foreground/70">
+                  {Math.round(localModelProgress)}%
+                </span>
+              </div>
+            ) : isLocalModelReady ? (
+              <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                <Check className="h-3.5 w-3.5" />
+                Local model ready.
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="text-muted-foreground">
+                  {localModelError || "Local model not loaded."}
+                </span>
+                <button
+                  onClick={() => void loadLocalModel(selectedModelId)}
+                  disabled={isStreaming}
+                  className="rounded border border-border bg-background px-2 py-1 font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Load Model
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Messages */}
+        <MessageList
+          messages={messages}
+          streamingMsgId={streamingMsgId}
+          isStreaming={isStreaming}
+          onEditMessage={handleEditMessage}
+          onRetryMessage={handleRetryMessage}
+        />
+
+        {/* Status bar */}
+        {messages.length > 0 && (
+          <ConversationStatusBar messages={messages} modelId={selectedModelId} />
+        )}
+
+        {/* Input */}
+        <ChatInput
+          onSend={handleSend}
+          onStop={handleStop}
+          isStreaming={isStreaming}
+          disabled={false}
+        />
       </div>
 
-      {isLocalWebGPUSelected && (
-        <div className="border-b border-border bg-muted/30 px-4 py-2 text-xs">
-          {webGPUSupported === false ? (
-            <div className="flex items-center gap-2 text-destructive">
-              <Bot className="h-3.5 w-3.5" />
-              WebGPU is not supported in this browser.
-            </div>
-          ) : localModelStatus === "loading" ? (
-            <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
-              <Bot className="h-3.5 w-3.5 animate-pulse" />
-              <span>{localModelLoadingText || "Loading local model…"}</span>
-              <span className="rounded bg-background px-2 py-0.5 font-mono text-[10px] text-foreground/70">
-                {Math.round(localModelProgress)}%
-              </span>
-            </div>
-          ) : isLocalModelReady ? (
-            <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
-              <Check className="h-3.5 w-3.5" />
-              Local model ready.
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="text-muted-foreground">
-                {localModelError || "Local model not loaded."}
-              </span>
-              <button
-                onClick={() => void loadLocalModel(selectedModelId)}
-                disabled={isStreaming}
-                className="rounded border border-border bg-background px-2 py-1 font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Load Model
-              </button>
-            </div>
-          )}
-        </div>
+      {/* Workspace file panel (right side) */}
+      {filesPanelOpen && (
+        <WorkspaceFilePanel
+          refreshKey={filesPanelRefreshKey}
+          onClose={() => setFilesPanelOpen(false)}
+        />
       )}
-
-      {/* Messages */}
-      <MessageList
-        messages={messages}
-        streamingMsgId={streamingMsgId}
-        isStreaming={isStreaming}
-        onEditMessage={handleEditMessage}
-        onRetryMessage={handleRetryMessage}
-      />
-
-      {/* Status bar */}
-      {messages.length > 0 && (
-        <ConversationStatusBar messages={messages} modelId={selectedModelId} />
-      )}
-
-      {/* Input */}
-      <ChatInput
-        onSend={handleSend}
-        onStop={handleStop}
-        isStreaming={isStreaming}
-        disabled={false}
-      />
     </div>
   );
 }
