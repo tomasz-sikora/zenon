@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { Eye, EyeOff, Save, Trash2, Plus, ChevronDown, Wifi, WifiOff, Loader2, FileText, X } from "lucide-react";
 import { useProviderStore } from "@/store/providerStore";
 import { useMcpStore, type McpServerConfig, type McpTransport } from "@/store/mcpStore";
@@ -10,7 +11,11 @@ import type { ModelInfo, ProviderConfig } from "@zenon/shared-types";
 import { toast } from "@/components/ui/Toaster";
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<"providers" | "mcp" | "general" | "proxy" | "skills">("providers");
+  const location = useLocation();
+  const initialTab = (location.state as { tab?: string } | null)?.tab;
+  const [activeTab, setActiveTab] = useState<"providers" | "mcp" | "general" | "proxy" | "skills">(
+    initialTab === "skills" ? "skills" : "providers"
+  );
 
   return (
     <div className="flex h-full flex-col">

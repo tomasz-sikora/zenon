@@ -13,6 +13,7 @@ import {
   Brain,
   Loader2,
   AlertCircle,
+  Info,
 } from "lucide-react";
 import type { Message, ToolResultContent, ToolUseContent } from "@zenon/shared-types";
 import { cn } from "@/lib/utils";
@@ -102,12 +103,9 @@ export function MessageBubble({
           ))
         )}
 
-        {/* Per-message token usage */}
+        {/* Per-message token usage — info icon with popover */}
         {message.usage && !isStreaming && (
-          <div className="text-[10px] text-muted-foreground/50 mt-0.5">
-            {message.usage.inputTokens}↑ {message.usage.outputTokens}↓
-            {message.usage.cacheReadTokens ? ` · ${message.usage.cacheReadTokens} cached` : ""}
-          </div>
+          <TokenUsageInfo usage={message.usage} modelId={message.modelId} />
         )}
 
         {/* Action buttons */}
@@ -380,6 +378,113 @@ function parseToolResultContent(content: string):
   } catch {
     return null;
   }
+}
+
+// ─── Token Usage Info ─────────────────────────────────────────────────────────
+
+const MODEL_PRICING: Record<string, { input: number; output: number; cacheRead?: number }> = {
+  "gpt-4o": { input: 2.5, output: 10, cacheRead: 1.25 },
+  "gpt-4o-mini": { input: 0.15, output: 0.6, cacheRead: 0.075 },
+  "gpt-4.1": { input: 2, output: 8, cacheRead: 0.5 },
+  "gpt-4.1-mini": { input: 0.4, output: 1.6, cacheRead: 0.1 },
+  "claude-opus-4-5": { input: 15, output: 75, cacheRead: 1.5 },
+  "claude-sonnet-4-5": { input: 3, output: 15, cacheRead: 0.3 },
+  "claude-haiku-4-5": { input: 0.8, output: 4, cacheRead: 0.08 },
+  "claude-3-5-sonnet-20241022": { input: 3, output: 15, cacheRead: 0.3 },
+  "claude-3-5-haiku-20241022": { input: 0.8, output: 4, cacheRead: 0.08 },
+  "gemini-2.5-pro": { input: 1.25, output: 10 },
+  "gemini-2.5-flash": { input: 0.075, output: 0.3 },
+  "gemini-2.0-flash": { input: 0.1, output: 0.4 },
+};
+
+function estimateMessageCost(
+  modelId: string | undefined,
+  inputTokens: number,
+  outputTokens: number,
+  cacheReadTokens = 0,
+): number | null {
+  if (!modelId) return null;
+  const pricing = MODEL_PRICING[modelId];
+  if (!pricing) return null;
+  return (
+    (inputTokens * pricing.input) / 1_000_000 +
+    (outputTokens * pricing.output) / 1_000_000 +
+    (cacheReadTokens > 0 && pricing.cacheRead ? (cacheReadTokens * pricing.cacheRead) / 1_000_000 : 0)
+  );
+}
+
+function TokenUsageInfo({
+  usage,
+  modelId,
+}: {
+  usage: NonNullable<Message["usage"]>;
+  modelId?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const cost = estimateMessageCost(modelId, usage.inputTokens, usage.outputTokens, usage.cacheReadTokens);
+
+  return (
+    <div className="relative inline-flex items-center mt-0.5">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-0.5 text-[10px] text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+        aria-label="Token usage details"
+        title="View token usage"
+      >
+        <Info className="h-3 w-3" />
+        <span>{usage.inputTokens + usage.outputTokens}</span>
+      </button>
+
+      {open && (
+        <>
+          {/* backdrop */}
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute bottom-full left-0 z-50 mb-1.5 w-52 rounded-lg border border-border bg-popover p-3 shadow-lg text-[11px]">
+            <div className="font-medium text-foreground/80 mb-2">Token usage</div>
+            <div className="space-y-1 text-muted-foreground">
+              <div className="flex justify-between">
+                <span>Input</span>
+                <span className="font-mono text-foreground/70">{usage.inputTokens.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Output</span>
+                <span className="font-mono text-foreground/70">{usage.outputTokens.toLocaleString()}</span>
+              </div>
+              {(usage.cacheReadTokens ?? 0) > 0 && (
+                <div className="flex justify-between text-blue-500/70">
+                  <span>Cache read</span>
+                  <span className="font-mono">{usage.cacheReadTokens!.toLocaleString()}</span>
+                </div>
+              )}
+              {(usage.cacheWriteTokens ?? 0) > 0 && (
+                <div className="flex justify-between text-purple-500/70">
+                  <span>Cache write</span>
+                  <span className="font-mono">{usage.cacheWriteTokens!.toLocaleString()}</span>
+                </div>
+              )}
+              <div className="flex justify-between border-t border-border pt-1 mt-1 text-foreground/60">
+                <span>Total</span>
+                <span className="font-mono">{(usage.inputTokens + usage.outputTokens).toLocaleString()}</span>
+              </div>
+              {cost !== null && (
+                <div className="flex justify-between text-emerald-600 dark:text-emerald-400 font-medium">
+                  <span>Est. cost</span>
+                  <span className="font-mono">
+                    {cost < 0.001 ? "<$0.001" : cost < 0.01 ? `$${cost.toFixed(4)}` : `$${cost.toFixed(3)}`}
+                  </span>
+                </div>
+              )}
+            </div>
+            {modelId && (
+              <div className="mt-2 pt-2 border-t border-border text-[10px] text-muted-foreground/50 font-mono truncate">
+                {modelId}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 function getMessageText(message: Message): string {

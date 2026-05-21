@@ -1,6 +1,6 @@
 import { useParams, useOutletContext, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, PanelLeft, Wrench, ChevronDown, Bot, BookOpen } from "lucide-react";
+import { Check, PanelLeft, Wrench, ChevronDown, Bot, BookOpen, Download, Plus } from "lucide-react";
 import { useConversationStore } from "@/store/conversationStore";
 import { useAgentStore } from "@/store/agentStore";
 import { useProviderStore } from "@/store/providerStore";
@@ -363,6 +363,33 @@ export default function ChatPage() {
 
   const messages = conversation?.messages ?? [];
 
+  const handleExport = () => {
+    if (!conversation || messages.length === 0) return;
+    const title = conversation.title || "conversation";
+    const lines: string[] = [`# ${title}`, ""];
+    for (const msg of messages) {
+      if (msg.role === "system" || msg.role === "tool") continue;
+      const roleLabel = msg.role === "user" ? "**You**" : `**Assistant** _(${msg.modelId ?? "AI"})_`;
+      lines.push(`### ${roleLabel}`);
+      for (const block of msg.content) {
+        if (block.type === "text") lines.push(block.text);
+        else if (block.type === "thinking") lines.push(`> 💭 _Reasoning:_\n> ${block.thinking.replace(/\n/g, "\n> ")}`);
+        else if (block.type === "tool_use") lines.push(`> 🔧 \`${block.toolName}\``);
+      }
+      if (msg.usage) {
+        lines.push(``, `_↑${msg.usage.inputTokens} ↓${msg.usage.outputTokens} tokens_`);
+      }
+      lines.push("");
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="flex h-full flex-col">
       {/* Toolbar */}
@@ -382,6 +409,16 @@ export default function ChatPage() {
             <span className="rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground animate-pulse">
               {agentStatus}
             </span>
+          )}
+          {messages.length > 0 && (
+            <button
+              onClick={handleExport}
+              className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
+              aria-label="Export conversation"
+              title="Download conversation as Markdown"
+            >
+              <Download className="h-4 w-4" />
+            </button>
           )}
           <AgentSelector
             agents={agents}
@@ -708,6 +745,7 @@ interface SkillSelectorProps {
 function SkillSelector({ skills, selectedSkillIds, onChange }: SkillSelectorProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
   const selected = new Set(selectedSkillIds);
 
   useEffect(() => {
@@ -758,7 +796,7 @@ function SkillSelector({ skills, selectedSkillIds, onChange }: SkillSelectorProp
           <div className="max-h-72 overflow-y-auto py-1">
             {skills.length === 0 ? (
               <div className="px-3 py-4 text-center text-xs text-muted-foreground">
-                No skills defined. Add skills in Settings → Skills.
+                No skills defined yet.
               </div>
             ) : (
               skills.map((skill) => (
@@ -782,6 +820,16 @@ function SkillSelector({ skills, selectedSkillIds, onChange }: SkillSelectorProp
                 </button>
               ))
             )}
+          </div>
+          {/* Footer: link to add a new skill */}
+          <div className="border-t border-border px-3 py-2">
+            <button
+              onClick={() => { setOpen(false); void navigate("/settings", { state: { tab: "skills" } }); }}
+              className="flex w-full items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Add new skill…
+            </button>
           </div>
         </div>
       )}

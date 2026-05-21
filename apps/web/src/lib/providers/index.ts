@@ -21,12 +21,21 @@ export function createProvider(
     case "openai-compatible": {
       const providerOpts: Parameters<typeof OpenAIProvider.prototype.complete>[0] extends never
         ? never
-        : { id: string; name: string; apiKey: string; baseUrl?: string } = {
+        : { id: string; name: string; apiKey: string; baseUrl?: string; proxyUrl?: string } = {
         id: config.id,
         name: config.name,
         apiKey,
       };
       if (config.baseUrl) providerOpts.baseUrl = config.baseUrl;
+      // Route openai-compatible providers with absolute URLs through the built-in proxy
+      // to avoid CORS errors. Relative paths (e.g. /ollama/v1) go direct.
+      if (
+        config.type === "openai-compatible" &&
+        config.baseUrl &&
+        (config.baseUrl.startsWith("http://") || config.baseUrl.startsWith("https://"))
+      ) {
+        providerOpts.proxyUrl = "/api/chat";
+      }
       return new OpenAIProvider(providerOpts);
     }
 

@@ -14,7 +14,7 @@ app.use(
   cors({
     origin: "*",
     allowMethods: ["GET", "POST", "OPTIONS"],
-    allowHeaders: ["Content-Type", "Authorization", "x-api-key", "anthropic-version"],
+    allowHeaders: ["Content-Type", "Authorization", "x-api-key", "anthropic-version", "X-Provider-Base-URL"],
     exposeHeaders: ["Content-Type"],
   }),
 );
