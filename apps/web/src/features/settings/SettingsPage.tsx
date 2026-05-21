@@ -833,27 +833,33 @@ function SkillsSettings() {
               </button>
               <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
               <span className="flex-1 text-sm font-medium truncate">{sk.name}</span>
+              {sk.predefined && (
+                <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded shrink-0">Built-in</span>
+              )}
               <button
                 onClick={() => setEditingId(editingId === sk.id ? null : sk.id)}
                 className="text-xs text-muted-foreground hover:text-foreground px-2 py-0.5 rounded hover:bg-muted transition-colors"
               >
                 {editingId === sk.id ? "Collapse" : "Edit"}
               </button>
-              <button
-                onClick={() => { deleteSkill(sk.id); if (editingId === sk.id) setEditingId(null); }}
-                className="p-1 text-muted-foreground hover:text-destructive transition-colors"
-                title="Delete"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              {!sk.predefined && (
+                <button
+                  onClick={() => { deleteSkill(sk.id); if (editingId === sk.id) setEditingId(null); }}
+                  className="p-1 text-muted-foreground hover:text-destructive transition-colors"
+                  title="Delete"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
             {editingId === sk.id && (
               <div className="px-3 py-2 space-y-2 border-t border-border">
                 <input
                   value={sk.name}
                   onChange={(e) => updateSkill(sk.id, { name: e.target.value })}
-                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-60 disabled:cursor-not-allowed"
                   placeholder="Skill name (e.g. CONVENTIONS.md)"
+                  disabled={sk.predefined}
                 />
                 <textarea
                   value={sk.content}
