@@ -18,11 +18,12 @@ const pending = new Map<string, { resolve: (v: number[]) => void; reject: (e: Er
 
 function getWorker(): Worker {
   if (!ragWorker) {
+    workerError = null;
     ragWorker = new Worker(new URL("../../workers/rag.worker.ts", import.meta.url), { type: "module" });
     ragWorker.onmessage = (e) => {
       const msg = e.data as { id: string; type: string; embedding?: number[]; error?: string };
       if (msg.id === "__init__") {
-        if (msg.type === "ready") { workerReady = true; return; }
+        if (msg.type === "ready") { workerReady = true; workerError = null; return; }
         if (msg.type === "error") {
           workerError = new Error(msg.error ?? "Embedding worker failed to initialise");
           // Reject all pending requests that were waiting for init
@@ -38,7 +39,10 @@ function getWorker(): Worker {
       else if (msg.type === "error") { req.reject(new Error(msg.error)); pending.delete(msg.id); }
     };
     ragWorker.onerror = (e) => {
-      workerError = new Error(`Embedding worker crashed: ${e.message}`);
+      const details =
+        e.message ||
+        ("filename" in e && e.filename ? `${e.filename}:${e.lineno}:${e.colno}` : "unknown error");
+      workerError = new Error(`Embedding worker crashed: ${details}`);
       for (const [, req] of pending) req.reject(workerError);
       pending.clear();
       ragWorker = null; // allow recreation on next call
