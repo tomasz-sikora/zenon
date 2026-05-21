@@ -125,6 +125,7 @@ All state is managed with **Zustand** and persisted to `localStorage` via the `p
 | `mcpStore` | localStorage | MCP server configurations |
 | `skillStore` | localStorage | Custom skill/CLAUDE.md files |
 | `localModelStore` | localStorage | Local model download state |
+| `ragStore` | localStorage | RAG config: embedding model, chunking params, CSV handling mode |
 
 **API keys** are stored under `zenon-key-<providerId>` in `localStorage`. They never leave the browser except as `Authorization` headers forwarded by the proxy.
 
@@ -167,7 +168,7 @@ Heavy or blocking operations run in Web Workers to keep the UI responsive:
 | Worker | Runtime | Handles |
 |---|---|---|
 | `tools.worker.ts` | Pyodide (WASM Python 3.12) | `python_exec` tool — sandboxed Python, matplotlib, captures output files |
-| `rag.worker.ts` | `@huggingface/transformers` v4 | Embedding generation for RAG indexing & search (384-d `all-MiniLM-L6-v2`) |
+| `rag.worker.ts` | `@huggingface/transformers` v4 | Embedding generation for RAG indexing & search (configurable model, default 384-d `all-MiniLM-L6-v2`). Supports model pre-download and runtime switching. |
 | `speech.worker.ts` | `@xenova/transformers` (Whisper) | ASR transcription |
 | `local-webgpu.worker.ts` | `@huggingface/transformers` (WebGPU) | On-device LLM inference |
 

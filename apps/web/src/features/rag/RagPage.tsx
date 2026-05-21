@@ -1,10 +1,12 @@
 import { useState, useEffect, useRef } from "react";
-import { BookOpen, Upload, Trash2, RefreshCw, Search, FileText, AlertCircle, CheckCircle } from "lucide-react";
+import { BookOpen, Upload, Trash2, RefreshCw, Search, FileText, AlertCircle, CheckCircle, Database, Settings2 } from "lucide-react";
 import { useWorkspaceStore } from "@/store/workspaceStore";
-import { ingestDocument, listSources, removeSource, getIndexStats, searchDocuments } from "@/lib/rag/pipeline";
-import type { SearchResult } from "@/lib/rag/pipeline";
+import { useRagStore } from "@/store/ragStore";
+import { ingestDocument, listSources, removeSource, getIndexStats, searchDocuments, ingestCsvAsTable, listCsvTables, removeCsvTable } from "@/lib/rag/pipeline";
+import type { SearchResult, CsvTableMeta } from "@/lib/rag/pipeline";
 import { readFileBlob } from "@/lib/storage/opfs";
 import { toast } from "@/components/ui/Toaster";
+import { useNavigate } from "react-router-dom";
 
 async function extractText(file: File): Promise<string> {
   const text = await file.text();
@@ -16,11 +18,18 @@ async function extractText(file: File): Promise<string> {
   return text;
 }
 
+function isCsvFile(filename: string): boolean {
+  return filename.toLowerCase().endsWith(".csv");
+}
+
 export default function RagPage() {
   const { workspaces, currentWorkspaceId } = useWorkspaceStore();
+  const { chunking, csvHandling, embeddingModelId } = useRagStore();
+  const navigate = useNavigate();
   const wsId = currentWorkspaceId ?? workspaces[0]?.id;
 
   const [sources, setSources] = useState<string[]>([]);
+  const [csvTables, setCsvTables] = useState<CsvTableMeta[]>([]);
   const [stats, setStats] = useState<{ chunks: number; sources: number } | null>(null);
   const [ingesting, setIngesting] = useState(false);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -32,9 +41,14 @@ export default function RagPage() {
 
   const reload = async () => {
     if (!wsId) return;
-    const [srcs, st] = await Promise.all([listSources(wsId), getIndexStats(wsId)]);
+    const [srcs, st, tables] = await Promise.all([
+      listSources(wsId),
+      getIndexStats(wsId),
+      listCsvTables(wsId),
+    ]);
     setSources(srcs);
     setStats(st);
+    setCsvTables(tables);
   };
 
   useEffect(() => { reload(); }, [wsId]);
@@ -46,10 +60,21 @@ export default function RagPage() {
       try {
         const text = await extractText(file);
         if (!text.trim()) { toast.error(`${file.name} has no extractable text`); continue; }
+
+        // CSV files in SQL mode → store as table
+        if (isCsvFile(file.name) && csvHandling === "sql") {
+          const meta = await ingestCsvAsTable(wsId, file.name, text);
+          toast.success(`Stored ${file.name} as table "${meta.tableName}" (${meta.rowCount} rows)`);
+          continue;
+        }
+
         await ingestDocument({
           workspaceId: wsId,
           source: file.name,
           text,
+          chunkSize: chunking.chunkSize,
+          overlap: chunking.overlap,
+          embeddingModelId,
           onProgress: (done, total) => setProgress({ done, total }),
         });
         toast.success(`Indexed ${file.name}`);
@@ -66,6 +91,13 @@ export default function RagPage() {
     if (!wsId || !confirm(`Remove "${source}" from the knowledge base?`)) return;
     await removeSource(wsId, source);
     toast.success(`Removed ${source}`);
+    reload();
+  };
+
+  const handleRemoveTable = async (tableName: string) => {
+    if (!wsId || !confirm(`Remove table "${tableName}"?`)) return;
+    await removeCsvTable(wsId, tableName);
+    toast.success(`Removed table ${tableName}`);
     reload();
   };
 
@@ -98,14 +130,30 @@ export default function RagPage() {
           <h1 className="text-xl font-semibold">Knowledge Base</h1>
           <p className="text-sm text-muted-foreground">Upload documents to create a searchable RAG index</p>
         </div>
-        <button onClick={reload} className="ml-auto p-1.5 rounded hover:bg-accent">
-          <RefreshCw className="h-4 w-4" />
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => navigate("/settings", { state: { tab: "rag" } })}
+            className="p-1.5 rounded hover:bg-accent"
+            title="RAG Settings"
+          >
+            <Settings2 className="h-4 w-4" />
+          </button>
+          <button onClick={reload} className="p-1.5 rounded hover:bg-accent">
+            <RefreshCw className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Config summary */}
+      <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+        <span className="px-2 py-0.5 rounded bg-muted">Model: {embeddingModelId.split("/").pop()}</span>
+        <span className="px-2 py-0.5 rounded bg-muted">Chunks: {chunking.chunkSize} / {chunking.overlap}</span>
+        <span className="px-2 py-0.5 rounded bg-muted">CSV: {csvHandling === "sql" ? "SQL" : "Chunks"}</span>
       </div>
 
       {/* Stats */}
       {stats && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <div className="border border-border rounded-lg p-3">
             <p className="text-2xl font-bold">{stats.sources}</p>
             <p className="text-sm text-muted-foreground">Documents</p>
@@ -113,6 +161,10 @@ export default function RagPage() {
           <div className="border border-border rounded-lg p-3">
             <p className="text-2xl font-bold">{stats.chunks}</p>
             <p className="text-sm text-muted-foreground">Indexed chunks</p>
+          </div>
+          <div className="border border-border rounded-lg p-3">
+            <p className="text-2xl font-bold">{csvTables.length}</p>
+            <p className="text-sm text-muted-foreground">SQL tables</p>
           </div>
         </div>
       )}
@@ -126,7 +178,10 @@ export default function RagPage() {
       >
         <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
         <p className="font-medium">Upload documents to index</p>
-        <p className="text-sm text-muted-foreground mt-1">TXT, MD, CSV, JSON • PDF and DOCX support coming soon</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          TXT, MD, CSV, JSON • PDF and DOCX support coming soon
+          {csvHandling === "sql" && " • CSV files will be stored as SQL tables"}
+        </p>
         {ingesting && progress && (
           <div className="mt-3">
             <div className="w-full bg-muted rounded-full h-1.5">
@@ -139,6 +194,32 @@ export default function RagPage() {
       </div>
       <input ref={fileInputRef} type="file" multiple className="hidden" accept=".txt,.md,.csv,.json,.html"
         onChange={(e) => handleUpload(e.target.files)} />
+
+      {/* CSV Tables */}
+      {csvTables.length > 0 && (
+        <div>
+          <h2 className="text-sm font-semibold mb-2 text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
+            <Database className="h-3.5 w-3.5" /> SQL Tables
+          </h2>
+          <div className="space-y-1">
+            {csvTables.map((table) => (
+              <div key={table.tableName} className="flex items-center gap-2 px-3 py-2 rounded hover:bg-muted/40 group">
+                <Database className="h-4 w-4 text-blue-500 shrink-0" />
+                <span className="text-sm font-mono">{table.tableName}</span>
+                <span className="text-xs text-muted-foreground">
+                  {table.rowCount} rows · {table.columns.length} cols
+                </span>
+                <span className="text-xs text-muted-foreground truncate ml-auto mr-2" title={table.columns.join(", ")}>
+                  ({table.columns.slice(0, 4).join(", ")}{table.columns.length > 4 ? "…" : ""})
+                </span>
+                <button onClick={() => handleRemoveTable(table.tableName)} className="opacity-0 group-hover:opacity-100 p-1 hover:text-destructive transition-all" title="Remove">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Sources list */}
       {sources.length > 0 && (
