@@ -1,9 +1,9 @@
 /**
- * RAG Web Worker — handles embedding generation using transformers.js.
+ * RAG Web Worker — handles embedding generation using @huggingface/transformers.
  * Runs all-MiniLM-L6-v2 model to create 384-dimensional sentence embeddings.
  */
 
-import { pipeline, type FeatureExtractionPipeline } from "@xenova/transformers";
+import { pipeline, type FeatureExtractionPipeline } from "@huggingface/transformers";
 
 let embedder: FeatureExtractionPipeline | null = null;
 let loading = false;
@@ -40,13 +40,15 @@ async function getEmbedder(): Promise<FeatureExtractionPipeline> {
   loading = true;
   try {
     embedder = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
-      progress_callback: (progress: { progress?: number; status?: string; file?: string }) => {
-        post({
-          id: "__progress__",
-          type: "progress",
-          progress: progress.progress ?? 0,
-          message: `Loading model: ${progress.file ?? ""}`,
-        });
+      progress_callback: (info: { status?: string; progress?: number; file?: string }) => {
+        if (info.status === "progress") {
+          post({
+            id: "__progress__",
+            type: "progress",
+            progress: info.progress ?? 0,
+            message: `Loading model: ${info.file ?? ""}`,
+          });
+        }
       },
     });
     post({ id: "__init__", type: "ready" });

@@ -12,6 +12,7 @@ import { generateId } from "@/lib/utils";
 
 let ragWorker: Worker | null = null;
 let workerReady = false;
+let workerError: Error | null = null;
 let reqCounter = 0;
 const pending = new Map<string, { resolve: (v: number[]) => void; reject: (e: Error) => void }>();
 
@@ -20,11 +21,28 @@ function getWorker(): Worker {
     ragWorker = new Worker(new URL("../../workers/rag.worker.ts", import.meta.url), { type: "module" });
     ragWorker.onmessage = (e) => {
       const msg = e.data as { id: string; type: string; embedding?: number[]; error?: string };
-      if (msg.id === "__init__" && msg.type === "ready") { workerReady = true; return; }
+      if (msg.id === "__init__") {
+        if (msg.type === "ready") { workerReady = true; return; }
+        if (msg.type === "error") {
+          workerError = new Error(msg.error ?? "Embedding worker failed to initialise");
+          // Reject all pending requests that were waiting for init
+          for (const [, req] of pending) req.reject(workerError);
+          pending.clear();
+          return;
+        }
+        return;
+      }
       const req = pending.get(msg.id);
       if (!req) return;
       if (msg.type === "embedding") { req.resolve(msg.embedding!); pending.delete(msg.id); }
       else if (msg.type === "error") { req.reject(new Error(msg.error)); pending.delete(msg.id); }
+    };
+    ragWorker.onerror = (e) => {
+      workerError = new Error(`Embedding worker crashed: ${e.message}`);
+      for (const [, req] of pending) req.reject(workerError);
+      pending.clear();
+      ragWorker = null; // allow recreation on next call
+      workerReady = false;
     };
   }
   return ragWorker;
@@ -32,7 +50,10 @@ function getWorker(): Worker {
 
 async function embedText(text: string): Promise<number[]> {
   const w = getWorker();
-  while (!workerReady) await new Promise((r) => setTimeout(r, 200));
+  while (!workerReady) {
+    if (workerError) throw workerError;
+    await new Promise((r) => setTimeout(r, 200));
+  }
   const id = `rag-${++reqCounter}`;
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject });

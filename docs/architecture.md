@@ -140,6 +140,7 @@ workspaces/
     files/       ← user-uploaded files + Python output files
     artifacts/   ← tool output files
     history/     ← (reserved)
+    vectors/     ← RAG vector index (index.json)
 ```
 
 OPFS is accessed synchronously in dedicated workers where possible, and asynchronously from the main thread via the helpers in `lib/storage/opfs.ts`.
@@ -166,9 +167,15 @@ Heavy or blocking operations run in Web Workers to keep the UI responsive:
 | Worker | Runtime | Handles |
 |---|---|---|
 | `tools.worker.ts` | Pyodide (WASM Python 3.12) | `python_exec` tool — sandboxed Python, matplotlib, captures output files |
-| `rag.worker.ts` | Transformers.js | Embedding generation for RAG indexing & search |
-| `speech.worker.ts` | Whisper WASM | ASR transcription |
-| `local-webgpu.worker.ts` | Transformers.js (WebGPU) | On-device LLM inference |
+| `rag.worker.ts` | `@huggingface/transformers` v4 | Embedding generation for RAG indexing & search (384-d `all-MiniLM-L6-v2`) |
+| `speech.worker.ts` | `@xenova/transformers` (Whisper) | ASR transcription |
+| `local-webgpu.worker.ts` | `@huggingface/transformers` (WebGPU) | On-device LLM inference |
+
+> **Browser security requirements** — `rag.worker.ts` (ONNX WASM) and `tools.worker.ts` (Pyodide) both rely on `SharedArrayBuffer`, which the browser only enables in a **cross-origin isolated** context. Both the Vite dev server and the production nginx config serve two required headers:
+> ```
+> Cross-Origin-Opener-Policy: same-origin
+> Cross-Origin-Embedder-Policy: require-corp
+> ```
 
 ---
 

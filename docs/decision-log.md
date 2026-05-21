@@ -111,13 +111,26 @@ Significant technical and architectural decisions made during the development of
 
 ## 10. RAG with in-browser embeddings
 
-**Decision:** Compute embeddings in the browser using a small model via Transformers.js rather than calling an external embedding API.
+**Decision:** Compute embeddings in the browser using a small model via `@huggingface/transformers` rather than calling an external embedding API.
 
 **Rationale:**
 - Sending documents to an external embedding API contradicts the privacy-first goal.
 - `all-MiniLM-L6-v2` (~80 MB) produces good-quality embeddings for retrieval tasks and fits comfortably in browser memory.
 - Running embeddings in a Web Worker keeps the main thread responsive during indexing.
-- The trade-off is the one-time ~80 MB model download; subsequent runs use the cached model from IndexedDB.
+- The trade-off is the one-time ~80 MB model download; subsequent runs use the cached model (browser Cache API via `@huggingface/transformers`'s built-in `useBrowserCache`).
+- `@huggingface/transformers` v4 is the actively-maintained successor to `@xenova/transformers` v2; the embedding worker was migrated to avoid deprecation drift.
+
+---
+
+## 11. COOP/COEP headers required for SharedArrayBuffer
+
+**Decision:** Both the Vite dev-server and the production nginx config send `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` on the HTML document response.
+
+**Rationale:**
+- `SharedArrayBuffer` (required by Pyodide and the ONNX WASM runtime used by `@huggingface/transformers`) is restricted to **cross-origin isolated** browsing contexts since Chrome 92 / Firefox 79.
+- Without these headers, workers that depend on `SharedArrayBuffer` fail silently or throw a `ReferenceError`.
+- `require-corp` was chosen over the weaker `credentialless` for consistency with the Vite dev-server configuration.
+- HuggingFace CDN model file downloads use `fetch()` with CORS, which is not blocked by `require-corp` (only no-CORS sub-resources need explicit CORP headers).
 
 ---
 
