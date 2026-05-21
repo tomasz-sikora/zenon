@@ -94,7 +94,7 @@ export const useSkillStore = create<SkillStore>()(
             if (sk.id !== id) return sk;
             // Predefined skills cannot have their name changed
             if (sk.predefined) {
-              const { name: _name, predefined: _p, ...allowed } = patch as Partial<GlobalSkill>;
+              const { name: _name, predefined: _predefined, ...allowed } = patch as Partial<GlobalSkill>;
               return { ...sk, ...allowed };
             }
             return { ...sk, ...patch };
