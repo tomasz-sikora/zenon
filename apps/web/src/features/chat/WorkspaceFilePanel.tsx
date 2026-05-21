@@ -4,7 +4,7 @@
  * workspace-related tool and can also be toggled manually.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   X,
   RefreshCw,
@@ -27,7 +27,6 @@ import { cn } from "@/lib/utils";
 // ─── File icon helper ─────────────────────────────────────────────────────────
 
 function fileIcon(entry: FileEntry) {
-  if (entry.kind === "directory") return <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-500" />;
   const mime = entry.mimeType ?? "";
   if (mime.startsWith("image/")) return <Image className="h-3.5 w-3.5 shrink-0 text-green-500" />;
   if (mime.includes("pdf")) return <FileText className="h-3.5 w-3.5 shrink-0 text-red-500" />;
@@ -56,6 +55,9 @@ function TreeNode({ entry, depth, refreshKey }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(false);
   const [children, setChildren] = useState<FileEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  // Keep a ref so the refresh effect can read expanded without being subscribed to it
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
 
   const loadChildren = useCallback(async () => {
     setLoading(true);
@@ -71,11 +73,10 @@ function TreeNode({ entry, depth, refreshKey }: TreeNodeProps) {
 
   // Re-fetch children when refreshKey changes (if already expanded)
   useEffect(() => {
-    if (expanded) {
+    if (expandedRef.current) {
       void loadChildren();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshKey]);
+  }, [refreshKey, loadChildren]);
 
   const handleToggle = async () => {
     if (!expanded) {
