@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -298,6 +298,9 @@ function ToolCallCard({
 }) {
   const humanPrompt = getHumanPrompt(call, result);
   const [expanded, setExpanded] = useState(call.toolName === "ask_user");
+  useEffect(() => {
+    setExpanded(call.toolName === "ask_user");
+  }, [call.toolName, call.toolCallId]);
   const isPending = !result && isStreaming;
   const hasError = result?.isError;
 

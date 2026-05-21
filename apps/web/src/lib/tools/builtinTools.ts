@@ -152,10 +152,10 @@ toolRegistry.register({
     const rawOptions = Array.isArray(input.options)
       ? input.options.filter((opt): opt is string => typeof opt === "string")
       : [];
-    let options = rawOptions.map((opt) => opt.trim()).filter(Boolean).slice(0, MAX_ASK_USER_OPTIONS);
-    if (questionType === "confirm" && options.length === 0) {
-      options = [...ASK_USER_CONFIRM_OPTIONS];
-    }
+    const baseOptions = rawOptions.map((opt) => opt.trim()).filter(Boolean).slice(0, MAX_ASK_USER_OPTIONS);
+    const options = questionType === "confirm" && baseOptions.length === 0
+      ? [...ASK_USER_CONFIRM_OPTIONS]
+      : baseOptions;
     if ((questionType === "single_choice" || questionType === "multiple_choice") && options.length === 0) {
       return {
         toolCallId: "",
