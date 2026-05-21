@@ -56,7 +56,7 @@ describe("MessageBubble ask_user integration", () => {
     await userEvent.click(screen.getByRole("button", { name: "Canary" }));
 
     expect(onSubmitToolPromptResponse).toHaveBeenCalledWith(
-      'ask_user_response: {"question":"Choose deployment mode","answer":"Canary"}',
+      '{"type":"ask_user_response","question":"Choose deployment mode","answer":"Canary"}',
     );
   });
 });

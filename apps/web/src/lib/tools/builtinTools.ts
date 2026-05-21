@@ -1,6 +1,6 @@
 import { toolRegistry } from "./registry";
 import type { ToolResult } from "@zenon/shared-types";
-import { isAskUserQuestionType } from "./askUser";
+import { ASK_USER_CONFIRM_OPTIONS, isAskUserQuestionType } from "./askUser";
 
 const MAX_ASK_USER_OPTIONS = 12;
 
@@ -108,7 +108,7 @@ toolRegistry.register({
         questionType: {
           type: "string",
           description:
-            "Question mode: open (free text), confirm (yes/no), single_choice (one option), multiple_choice (multiple options).",
+            "Question mode: open (free text), confirm (yes/no confirmation), single_choice (one option), multiple_choice (multiple options).",
           enum: ["open", "confirm", "single_choice", "multiple_choice"],
           default: "open",
         },
@@ -154,7 +154,7 @@ toolRegistry.register({
       : [];
     let options = rawOptions.map((opt) => opt.trim()).filter(Boolean).slice(0, MAX_ASK_USER_OPTIONS);
     if (questionType === "confirm" && options.length === 0) {
-      options = ["Yes", "No"];
+      options = [...ASK_USER_CONFIRM_OPTIONS];
     }
     if ((questionType === "single_choice" || questionType === "multiple_choice") && options.length === 0) {
       return {

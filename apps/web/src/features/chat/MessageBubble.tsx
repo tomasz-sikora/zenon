@@ -18,7 +18,7 @@ import {
 import type { Message, ToolResultContent, ToolUseContent } from "@zenon/shared-types";
 import { cn } from "@/lib/utils";
 import type { AskUserQuestionType } from "@/lib/tools/askUser";
-import { isAskUserQuestionType } from "@/lib/tools/askUser";
+import { ASK_USER_CONFIRM_OPTIONS, isAskUserQuestionType } from "@/lib/tools/askUser";
 
 interface MessageBubbleProps {
   message: Message;
@@ -432,14 +432,18 @@ function HumanPromptResponse({
   const [draft, setDraft] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const options = prompt.questionType === "confirm" && prompt.options.length === 0
-    ? ["Yes", "No"]
+    ? [...ASK_USER_CONFIRM_OPTIONS]
     : prompt.options;
 
   const send = (answer: string | string[]) => {
     const formatted = Array.isArray(answer) ? answer.join(", ") : answer;
     if (!formatted.trim()) return;
     onSubmitToolPromptResponse(
-      `ask_user_response: ${JSON.stringify({ question: prompt.question, answer: formatted })}`,
+      JSON.stringify({
+        type: "ask_user_response",
+        question: prompt.question,
+        answer: formatted,
+      }),
     );
   };
 
