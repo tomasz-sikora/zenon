@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { WorkspaceFilePanel } from "@/features/chat/WorkspaceFilePanel";
 import { writeFile, ensureDir } from "@/lib/storage/opfs";
 
@@ -74,7 +74,7 @@ describe("WorkspaceFilePanel", () => {
     await screen.findByTestId("workspace-file-panel");
 
     const closeBtn = screen.getByLabelText("Close workspace file panel");
-    await act(async () => { fireEvent.click(closeBtn); });
+    fireEvent.click(closeBtn);
 
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -99,9 +99,7 @@ describe("WorkspaceFilePanel", () => {
 
     // Add a file and bump refreshKey
     await writeFile("workspaces/test-ws/files/new.txt", "new content");
-    await act(async () => {
-      rerender(<WorkspaceFilePanel refreshKey={1} onClose={() => {}} />);
-    });
+    rerender(<WorkspaceFilePanel refreshKey={1} onClose={() => {}} />);
 
     expect(await screen.findByTestId("panel-entry-new.txt")).toBeDefined();
   });
@@ -116,7 +114,7 @@ describe("WorkspaceFilePanel", () => {
     expect(refreshBtn).toBeDefined();
 
     // Should not throw
-    await act(async () => { fireEvent.click(refreshBtn); });
+    fireEvent.click(refreshBtn);
 
     // Files still visible after refresh
     expect(await screen.findByTestId("panel-entry-readme.txt")).toBeDefined();
