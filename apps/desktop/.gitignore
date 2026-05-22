@@ -1,0 +1,7 @@
+node_modules
+dist
+dist-electron
+.turbo
+*.js
+*.js.map
+*.d.ts
