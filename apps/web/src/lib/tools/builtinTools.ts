@@ -1,5 +1,8 @@
 import { toolRegistry } from "./registry";
 import type { ToolResult } from "@zenon/shared-types";
+import { ASK_USER_CONFIRM_OPTIONS, isAskUserQuestionType } from "./askUser";
+
+const MAX_ASK_USER_OPTIONS = 12;
 
 /** fetch_webpage tool — reads a URL and returns readable text */
 toolRegistry.register({
@@ -84,6 +87,105 @@ toolRegistry.register({
       toolName: "fetch_webpage",
       isError: false,
       content: `URL: ${url}\n\n${content}`,
+    };
+  },
+});
+
+/** ask_user tool */
+toolRegistry.register({
+  definition: {
+    name: "ask_user",
+    description:
+      "Ask the human in chat for follow-up input and pause the agent until they respond. Supports open, confirmation, single-choice, and multiple-choice questions.",
+    category: "utility",
+    inputSchema: {
+      type: "object",
+      properties: {
+        question: {
+          type: "string",
+          description: "Question to show to the human in chat",
+        },
+        questionType: {
+          type: "string",
+          description:
+            "Question mode: open (free text), confirm (yes/no confirmation), single_choice (one option), multiple_choice (multiple options).",
+          enum: ["open", "confirm", "single_choice", "multiple_choice"],
+          default: "open",
+        },
+        options: {
+          type: "array",
+          description: "Selectable options for confirm/single_choice/multiple_choice questions",
+          items: { type: "string" },
+        },
+        placeholder: {
+          type: "string",
+          description: "Optional placeholder text for open questions",
+        },
+        minSelections: {
+          type: "number",
+          description: "Minimum selections for multiple_choice (default: 1)",
+        },
+        maxSelections: {
+          type: "number",
+          description: "Maximum selections for multiple_choice (default: options length)",
+        },
+      },
+      required: ["question"],
+    },
+  },
+  executor: async (input): Promise<ToolResult> => {
+    const question = typeof input.question === "string" ? input.question.trim() : "";
+    const questionTypeRaw = typeof input.questionType === "string" ? input.questionType : "open";
+    const questionType = isAskUserQuestionType(questionTypeRaw)
+      ? questionTypeRaw
+      : "open";
+
+    if (!question) {
+      return {
+        toolCallId: "",
+        toolName: "ask_user",
+        isError: true,
+        content: "The 'question' field is required and cannot be empty.",
+      };
+    }
+
+    const rawOptions = Array.isArray(input.options)
+      ? input.options.filter((opt): opt is string => typeof opt === "string")
+      : [];
+    const baseOptions = rawOptions.map((opt) => opt.trim()).filter(Boolean).slice(0, MAX_ASK_USER_OPTIONS);
+    const options = questionType === "confirm" && baseOptions.length === 0
+      ? [...ASK_USER_CONFIRM_OPTIONS]
+      : baseOptions;
+    if ((questionType === "single_choice" || questionType === "multiple_choice") && options.length === 0) {
+      return {
+        toolCallId: "",
+        toolName: "ask_user",
+        isError: true,
+        content: `Question type "${questionType}" requires a non-empty 'options' array.`,
+      };
+    }
+
+    const placeholder = typeof input.placeholder === "string" ? input.placeholder : "";
+    const minRaw = Number(input.minSelections);
+    const maxRaw = Number(input.maxSelections);
+    const minSelections = Number.isFinite(minRaw) ? Math.max(1, Math.floor(minRaw)) : 1;
+    const maxSelections = Number.isFinite(maxRaw)
+      ? Math.max(minSelections, Math.floor(maxRaw))
+      : Math.max(minSelections, options.length || 1);
+
+    return {
+      toolCallId: "",
+      toolName: "ask_user",
+      isError: false,
+      content: JSON.stringify({
+        type: "human_input_request",
+        question,
+        questionType,
+        options,
+        placeholder,
+        minSelections,
+        maxSelections,
+      }),
     };
   },
 });

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import type { Message, ToolResultContent, ToolUseContent } from "@zenon/shared-types";
 import { cn } from "@/lib/utils";
+import type { AskUserQuestionType } from "@/lib/tools/askUser";
+import { ASK_USER_CONFIRM_OPTIONS, isAskUserQuestionType } from "@/lib/tools/askUser";
 
 interface MessageBubbleProps {
   message: Message;
@@ -25,6 +27,7 @@ interface MessageBubbleProps {
   toolResultMap: Map<string, ToolResultContent>;
   onEditMessage: (messageId: string, text: string) => void;
   onRetryMessage: (messageId: string) => void;
+  onSubmitToolPromptResponse: (content: string) => void;
 }
 
 export function MessageBubble({
@@ -33,6 +36,7 @@ export function MessageBubble({
   toolResultMap,
   onEditMessage,
   onRetryMessage,
+  onSubmitToolPromptResponse,
 }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
@@ -99,6 +103,7 @@ export function MessageBubble({
               isUser={isUser}
               isStreaming={isStreaming && i === message.content.length - 1}
               toolResultMap={toolResultMap}
+              onSubmitToolPromptResponse={onSubmitToolPromptResponse}
             />
           ))
         )}
@@ -143,11 +148,13 @@ function ContentBlock({
   isUser,
   isStreaming,
   toolResultMap,
+  onSubmitToolPromptResponse,
 }: {
   block: Message["content"][number];
   isUser: boolean;
   isStreaming: boolean;
   toolResultMap: Map<string, ToolResultContent>;
+  onSubmitToolPromptResponse: (content: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -203,7 +210,14 @@ function ContentBlock({
 
   if (block.type === "tool_use") {
     const result = toolResultMap.get(block.toolCallId);
-    return <ToolCallCard call={block} result={result} isStreaming={isStreaming} />;
+    return (
+      <ToolCallCard
+        call={block}
+        result={result}
+        isStreaming={isStreaming}
+        onSubmitToolPromptResponse={onSubmitToolPromptResponse}
+      />
+    );
   }
 
   if (block.type === "image") {
@@ -275,12 +289,18 @@ function ToolCallCard({
   call,
   result,
   isStreaming,
+  onSubmitToolPromptResponse,
 }: {
   call: ToolUseContent;
   result?: ToolResultContent;
   isStreaming: boolean;
+  onSubmitToolPromptResponse: (content: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const humanPrompt = getHumanPrompt(call, result);
+  const [expanded, setExpanded] = useState(call.toolName === "ask_user");
+  useEffect(() => {
+    setExpanded(call.toolName === "ask_user");
+  }, [call.toolName, call.toolCallId]);
   const isPending = !result && isStreaming;
   const hasError = result?.isError;
 
@@ -337,7 +357,15 @@ function ToolCallCard({
               <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1 font-medium">
                 {hasError ? "Error" : "Output"}
               </div>
-              <ToolResultBody content={result.content} />
+              {humanPrompt && !hasError ? (
+                <HumanPromptResponse
+                  prompt={humanPrompt}
+                  onSubmitToolPromptResponse={onSubmitToolPromptResponse}
+                  disabled={isStreaming}
+                />
+              ) : (
+                <ToolResultBody content={result.content} />
+              )}
             </div>
           ) : (
             <div className="px-3 py-2 flex items-center gap-2 text-muted-foreground">
@@ -347,6 +375,161 @@ function ToolCallCard({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+type HumanPrompt = {
+  question: string;
+  questionType: AskUserQuestionType;
+  options: string[];
+  placeholder?: string;
+  minSelections?: number;
+  maxSelections?: number;
+};
+
+function getHumanPrompt(call: ToolUseContent, result?: ToolResultContent): HumanPrompt | null {
+  if (call.toolName !== "ask_user") return null;
+  const payload = parseHumanPromptPayload(result?.content) ?? call.toolInput;
+  if (!payload || typeof payload !== "object") return null;
+  const question = typeof payload.question === "string" ? payload.question.trim() : "";
+  if (!question) return null;
+  const questionType = isAskUserQuestionType(payload.questionType)
+    ? payload.questionType
+    : "open";
+  const options = Array.isArray(payload.options)
+    ? payload.options.filter((opt): opt is string => typeof opt === "string").map((opt) => opt.trim()).filter(Boolean)
+    : [];
+  const placeholder = typeof payload.placeholder === "string" ? payload.placeholder : undefined;
+  const minSelections = Number.isFinite(Number(payload.minSelections))
+    ? Math.max(1, Math.floor(Number(payload.minSelections)))
+    : undefined;
+  const maxSelections = Number.isFinite(Number(payload.maxSelections))
+    ? Math.max(minSelections ?? 1, Math.floor(Number(payload.maxSelections)))
+    : undefined;
+  return { question, questionType, options, placeholder, minSelections, maxSelections };
+}
+
+function parseHumanPromptPayload(content?: string): Record<string, unknown> | null {
+  if (!content) return null;
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    if (parsed.type === "human_input_request" || typeof parsed.question === "string") {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function HumanPromptResponse({
+  prompt,
+  onSubmitToolPromptResponse,
+  disabled,
+}: {
+  prompt: HumanPrompt;
+  onSubmitToolPromptResponse: (content: string) => void;
+  disabled: boolean;
+}) {
+  const [draft, setDraft] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
+  const options = prompt.questionType === "confirm" && prompt.options.length === 0
+    ? [...ASK_USER_CONFIRM_OPTIONS]
+    : prompt.options;
+
+  const send = (answer: string | string[]) => {
+    const formatted = Array.isArray(answer) ? answer.join(", ") : answer;
+    if (!formatted.trim()) return;
+    onSubmitToolPromptResponse(
+      JSON.stringify({
+        type: "ask_user_response",
+        question: prompt.question,
+        answer: formatted,
+      }),
+    );
+  };
+
+  if (prompt.questionType === "open") {
+    return (
+      <div className="space-y-2">
+        <p className="text-[11px] text-muted-foreground">{prompt.question}</p>
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={prompt.placeholder ?? "Type your answer…"}
+          className="w-full resize-y rounded-md border border-border bg-background px-2 py-1.5 text-[11px] outline-none focus:ring-1 focus:ring-ring"
+          rows={3}
+        />
+        <button
+          onClick={() => send(draft)}
+          disabled={disabled || !draft.trim()}
+          className="rounded border border-border bg-background px-2 py-1 text-[11px] font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Send answer
+        </button>
+      </div>
+    );
+  }
+
+  if (prompt.questionType === "multiple_choice") {
+    const minSelections = prompt.minSelections ?? 1;
+    const maxSelections = prompt.maxSelections ?? Math.max(minSelections, options.length || 1);
+    return (
+      <div className="space-y-2">
+        <p className="text-[11px] text-muted-foreground">{prompt.question}</p>
+        <div className="space-y-1">
+          {options.map((option) => {
+            const checked = selected.includes(option);
+            return (
+              <label key={option} className="flex items-center gap-2 text-[11px]">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={disabled}
+                  onChange={(e) => {
+                    if (!e.target.checked) {
+                      setSelected((prev) => prev.filter((item) => item !== option));
+                      return;
+                    }
+                    setSelected((prev) => {
+                      if (prev.includes(option)) return prev;
+                      if (prev.length >= maxSelections) return prev;
+                      return [...prev, option];
+                    });
+                  }}
+                />
+                <span>{option}</span>
+              </label>
+            );
+          })}
+        </div>
+        <button
+          onClick={() => send(selected)}
+          disabled={disabled || selected.length < minSelections}
+          className="rounded border border-border bg-background px-2 py-1 text-[11px] font-medium hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          Submit selections
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] text-muted-foreground">{prompt.question}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((option) => (
+          <button
+            key={option}
+            onClick={() => send(option)}
+            disabled={disabled}
+            className="rounded border border-border bg-background px-2 py-1 text-[11px] hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {option}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -518,4 +701,3 @@ function getMessageText(message: Message): string {
     .map((b) => (b.type === "text" ? b.text : ""))
     .join("\n");
 }
-

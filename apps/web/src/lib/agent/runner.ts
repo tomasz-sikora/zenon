@@ -386,6 +386,13 @@ export async function runAgent(opts: AgentRunOptions): Promise<void> {
       return;
     }
 
+    // ask_user is a chat-human handoff tool. When invoked successfully, stop the
+    // current run and wait for the next human message before continuing.
+    if (results.some((r) => !r.isError && r.toolName === "ask_user")) {
+      onComplete(totalUsage);
+      return;
+    }
+
     // Add tool results as a user/tool message for the next round
     const resultContent: MessageContent[] = results.map((r) => ({
       type: "tool_result",
@@ -406,5 +413,4 @@ export async function runAgent(opts: AgentRunOptions): Promise<void> {
   // Should be unreachable — last round strips tools so model gives text
   onError(new Error(`Agent exceeded maximum tool rounds (${MAX_TOOL_ROUNDS})`));
 }
-
 
