@@ -93,7 +93,7 @@ function createWindow(): void {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false, // Required for preload to work with contextBridge
+      sandbox: true,
       webgl: true,
     },
   });
