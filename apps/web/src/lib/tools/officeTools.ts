@@ -38,7 +38,8 @@ toolRegistry.register({
       const content = await page.getTextContent();
       pages.push(content.items.map((item) => ("str" in item ? item.str : "")).join(" "));
     }
-    return { pages: pages.length, numPages: pdf.numPages, text: truncateText(pages.join("\n\n"), "PDF text") };
+    const fullText = pages.join("\n\n");
+    return { pageCount: pages.length, numPages: pdf.numPages, text: truncateText(fullText, "PDF text") };
   },
 });
 

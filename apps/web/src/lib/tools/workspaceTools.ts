@@ -17,7 +17,7 @@ const MAX_READ_CHARS = 8000;
 
 function truncateFileContent(text: string): string {
   if (text.length <= MAX_READ_CHARS) return text;
-  return text.slice(0, MAX_READ_CHARS) + `\n... [truncated — ${text.length} chars total, showing first ${MAX_READ_CHARS}. Use python_exec to process large files]`;
+  return text.slice(0, MAX_READ_CHARS) + `\n... [truncated — ${text.length} chars total, showing first ${MAX_READ_CHARS}. Use python_exec for full processing]`;
 }
 
 toolRegistry.register({
