@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   FolderOpen,
@@ -23,6 +23,9 @@ import {
   X,
   Check,
   Pencil,
+  Play,
+  Terminal,
+  Database,
 } from "lucide-react";
 import {
   listDir,
@@ -36,6 +39,8 @@ import {
 } from "@/lib/storage/opfs";
 import type { FileEntry } from "@/lib/storage/opfs";
 import { workspacePaths } from "@/lib/storage/workspace";
+import { execPython } from "@/lib/tools/pyodideTools";
+import { listCsvTables, queryCsvTable, type CsvTableMeta } from "@/lib/rag/pipeline";
 import { useWorkspaceStore } from "@/store/workspaceStore";
 import { toast } from "@/components/ui/Toaster";
 
@@ -118,6 +123,347 @@ function CsvTable({ text }: { text: string }) {
     </div>
   );
 }
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function escapeCsvValue(value: string): string {
+  return value.includes(",") || value.includes('"') || value.includes("\n")
+    ? `"${value.replace(/"/g, '""')}"`
+    : value;
+}
+
+function rowsToCsv(columns: string[], rows: Record<string, string>[]): string {
+  const csvLines = [columns.join(",")];
+  for (const row of rows) {
+    csvLines.push(columns.map((column) => escapeCsvValue(row[column] ?? "")).join(","));
+  }
+  return csvLines.join("\n");
+}
+
+const PYTHON_KEYWORDS = new Set([
+  "and", "as", "assert", "async", "await", "break", "class", "continue", "def", "del", "elif", "else",
+  "except", "False", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "None",
+  "nonlocal", "not", "or", "pass", "raise", "return", "True", "try", "while", "with", "yield",
+]);
+
+const PYTHON_BUILTINS = new Set([
+  "print", "len", "range", "int", "str", "float", "list", "dict", "set", "tuple", "type", "isinstance",
+  "enumerate", "zip", "map", "filter", "sorted", "reversed", "open", "input", "super", "property",
+  "staticmethod", "classmethod",
+]);
+
+function highlightPythonLine(line: string): ReactNode[] {
+  const tokens: ReactNode[] = [];
+  // Matches comments, quoted strings, decorators, numbers, and identifiers for lightweight Python highlighting.
+  const pattern = /#[^\n]*|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|@\w+|\b\d+(?:\.\d+)?\b|\b[A-Za-z_]\w*\b/g;
+  let lastIndex = 0;
+  let key = 0;
+
+  for (const match of line.matchAll(pattern)) {
+    const token = match[0];
+    const index = match.index ?? 0;
+    if (index > lastIndex) tokens.push(line.slice(lastIndex, index));
+
+    let className = "";
+    if (token.startsWith("#")) className = "text-muted-foreground italic";
+    else if (token.startsWith('"') || token.startsWith("'")) className = "text-emerald-400";
+    else if (token.startsWith("@")) className = "text-amber-400";
+    else if (/^\d/.test(token)) className = "text-orange-400";
+    else if (PYTHON_KEYWORDS.has(token)) className = "text-violet-400 font-semibold";
+    else if (PYTHON_BUILTINS.has(token)) className = "text-sky-400";
+
+    tokens.push(className ? <span key={`${index}-${key++}`} className={className}>{token}</span> : token);
+    lastIndex = index + token.length;
+  }
+
+  if (lastIndex < line.length) tokens.push(line.slice(lastIndex));
+  return tokens;
+}
+
+function PythonPreview({
+  code,
+  output,
+  error,
+  running,
+}: {
+  code: string;
+  output: string | null;
+  error: string | null;
+  running: boolean;
+}) {
+  const lines = code.split("\n");
+
+  return (
+    <div className="space-y-3">
+      <pre className="text-xs font-mono whitespace-pre-wrap break-all bg-muted/30 rounded p-2 max-h-72 overflow-auto">
+        {lines.map((line, index) => (
+          <span key={index}>
+            {highlightPythonLine(line)}
+            {index < lines.length - 1 ? "\n" : null}
+          </span>
+        ))}
+      </pre>
+
+      {(running || output !== null || error) && (
+        <div className="border-t border-border pt-2 space-y-2">
+          <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+            <Terminal className="h-3 w-3" /> Output
+          </p>
+          {running && !output && !error ? (
+            <pre className="text-xs font-mono whitespace-pre-wrap break-all bg-muted/50 rounded p-2 max-h-40 overflow-auto">
+              Running…
+            </pre>
+          ) : null}
+          {output ? (
+            <pre className="text-xs font-mono whitespace-pre-wrap break-all bg-muted/50 rounded p-2 max-h-40 overflow-auto">
+              {output}
+            </pre>
+          ) : null}
+          {error ? (
+            <pre className="text-xs font-mono whitespace-pre-wrap text-red-500 bg-red-500/10 rounded p-2 max-h-40 overflow-auto">
+              {error}
+            </pre>
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface ParsedCsvQuery {
+  columns?: string[];
+  where?: { column: string; operator: string; value: string };
+  orderBy?: string;
+  orderDirection: "asc" | "desc";
+  limit: number;
+}
+
+// Lightweight parser for simple workspace CSV queries: SELECT columns, WHERE, ORDER BY, LIMIT.
+function parseCsvQuery(query: string): ParsedCsvQuery {
+  const trimmed = query.trim();
+  const parsed: ParsedCsvQuery = { orderDirection: "asc", limit: 100 };
+  if (!trimmed) return parsed;
+
+  const selectMatch = trimmed.match(/^select\s+(.+?)(?=\s+where\b|\s+order\s+by\b|\s+limit\b|$)/i);
+  if (selectMatch) {
+    const selectPart = selectMatch[1].trim();
+    if (selectPart !== "*") {
+      parsed.columns = selectPart.split(",").map((column) => column.trim()).filter(Boolean);
+    }
+  } else if (/^select\b/i.test(trimmed)) {
+    throw new Error("Invalid SELECT clause");
+  }
+
+  // Intentionally supports simple quoted or unquoted values rather than full SQL string escaping.
+  const whereMatch = trimmed.match(/\bwhere\s+([a-zA-Z0-9_]+)\s*(=|!=|>=|<=|>|<|like)\s*(?:"([^"]*)"|'([^']*)'|([^\s]+))/i);
+  if (whereMatch) {
+    parsed.where = {
+      column: whereMatch[1],
+      operator: whereMatch[2].toUpperCase() === "LIKE" ? "LIKE" : whereMatch[2],
+      value: whereMatch[3] ?? whereMatch[4] ?? whereMatch[5] ?? "",
+    };
+  }
+
+  const orderMatch = trimmed.match(/\border\s+by\s+([a-zA-Z0-9_]+)(?:\s+(asc|desc))?/i);
+  if (orderMatch) {
+    parsed.orderBy = orderMatch[1];
+    parsed.orderDirection = orderMatch[2]?.toLowerCase() === "desc" ? "desc" : "asc";
+  }
+
+  const limitMatch = trimmed.match(/\blimit\s+(\d+)/i);
+  if (limitMatch) {
+    parsed.limit = Number(limitMatch[1]);
+  }
+
+  return parsed;
+}
+
+function CsvPreviewWithSql({ text, filePath, workspaceId }: { text: string; filePath: string; workspaceId: string }) {
+  const [sqlTable, setSqlTable] = useState<CsvTableMeta | null>(null);
+  const [sqlQuery, setSqlQuery] = useState("SELECT * LIMIT 100");
+  const [queryResults, setQueryResults] = useState<{ columns: string[]; rows: Record<string, string>[] } | null>(null);
+  const [querying, setQuerying] = useState(false);
+  const [queryError, setQueryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSqlTable(null);
+    setQueryResults(null);
+    setQueryError(null);
+
+    if (!workspaceId) return;
+
+    listCsvTables(workspaceId)
+      .then((tables) => {
+        if (cancelled) return;
+        const filename = filePath.split("/").pop() ?? "";
+        const tableName = filename.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_]/g, "_").toLowerCase();
+        setSqlTable(tables.find((table) => table.tableName === tableName) ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setSqlTable(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, filePath]);
+
+  const handleQuery = async () => {
+    if (!sqlTable || !workspaceId) return;
+    setQuerying(true);
+    setQueryError(null);
+    try {
+      const parsed = parseCsvQuery(sqlQuery);
+      const fetchLimit = parsed.orderBy ? sqlTable.rowCount : parsed.limit;
+      const base = await queryCsvTable(workspaceId, sqlTable.tableName, parsed.where, fetchLimit);
+      let rows = base.rows;
+
+      if (parsed.orderBy) {
+        const orderBy = parsed.orderBy;
+        rows = [...rows].sort((a, b) => {
+          const va = a[orderBy] ?? "";
+          const vb = b[orderBy] ?? "";
+          const na = Number(va);
+          const nb = Number(vb);
+          if (!Number.isNaN(na) && !Number.isNaN(nb)) {
+            return parsed.orderDirection === "desc" ? nb - na : na - nb;
+          }
+          return parsed.orderDirection === "desc"
+            ? String(vb).localeCompare(String(va))
+            : String(va).localeCompare(String(vb));
+        });
+      }
+
+      if (parsed.columns && parsed.columns.length > 0) {
+        const selectedColumns = parsed.columns;
+        rows = rows.map((row) => {
+          const next: Record<string, string> = {};
+          for (const column of selectedColumns) {
+            if (column in row) next[column] = row[column];
+          }
+          return next;
+        });
+      }
+
+      const columns = parsed.columns && parsed.columns.length > 0 ? parsed.columns : base.columns;
+      setQueryResults({ columns, rows: rows.slice(0, parsed.limit) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setQueryError(message);
+      toast.error("Query failed", message);
+    } finally {
+      setQuerying(false);
+    }
+  };
+
+  const handleExportResults = async () => {
+    if (!queryResults) return;
+    const exportPath = workspacePaths.file(workspaceId, "query_result.csv");
+    await writeFile(exportPath, rowsToCsv(queryResults.columns, queryResults.rows));
+    toast.success(`Saved query results to ${exportPath}`);
+  };
+
+  const handleDownloadResults = () => {
+    if (!queryResults) return;
+    downloadBlob(new Blob([rowsToCsv(queryResults.columns, queryResults.rows)], { type: "text/csv" }), "query_result.csv");
+  };
+
+  return (
+    <div className="space-y-3">
+      <CsvTable text={text} />
+
+      {sqlTable && (
+        <div className="border-t border-border pt-2 space-y-2">
+          <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+            <Database className="h-3 w-3" /> SQL Table: {sqlTable.tableName}
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={sqlQuery}
+              onChange={(e) => setSqlQuery(e.target.value)}
+              placeholder="SELECT * WHERE column = value ORDER BY column DESC LIMIT 25"
+              className="flex-1 text-xs border border-border rounded px-2 py-1 bg-background"
+              aria-label="SQL query"
+            />
+            <button
+              onClick={handleQuery}
+              disabled={querying}
+              className="text-xs px-2 py-1 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+            >
+              {querying ? "…" : "Run Query"}
+            </button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Supports SELECT columns, WHERE, ORDER BY, and LIMIT.
+          </p>
+
+          {queryError && (
+            <pre className="text-xs font-mono whitespace-pre-wrap text-red-500 bg-red-500/10 rounded p-2 max-h-32 overflow-auto">
+              {queryError}
+            </pre>
+          )}
+
+          {queryResults && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <span className="text-xs text-muted-foreground">{queryResults.rows.length} rows</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => {
+                      void handleExportResults();
+                    }}
+                    className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-accent"
+                  >
+                    <Download className="h-3 w-3" /> Export CSV
+                  </button>
+                  <button
+                    onClick={handleDownloadResults}
+                    className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-accent"
+                  >
+                    <Download className="h-3 w-3" /> Download
+                  </button>
+                </div>
+              </div>
+              <div className="overflow-auto max-h-48">
+                <table className="text-xs w-full border-collapse">
+                  <thead>
+                    <tr>
+                      {queryResults.columns.map((header) => (
+                        <th key={header} className="border border-border px-2 py-1 text-left bg-muted/50 font-medium whitespace-nowrap">
+                          {header}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {queryResults.rows.map((row, rowIndex) => (
+                      <tr key={rowIndex} className="hover:bg-muted/30">
+                        {queryResults.columns.map((column) => (
+                          <td key={`${rowIndex}-${column}`} className="border border-border px-2 py-0.5 whitespace-nowrap">
+                            {row[column] ?? ""}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 // ─── Workspace Stats ──────────────────────────────────────────────────────────
 
@@ -335,6 +681,9 @@ export default function WorkspacePage() {
   const [showNewFolder, setShowNewFolder] = useState(false);
   const [showManager, setShowManager] = useState(false);
   const [statsKey, setStatsKey] = useState(0);
+  const [pythonOutput, setPythonOutput] = useState<string | null>(null);
+  const [pythonError, setPythonError] = useState<string | null>(null);
+  const [pythonRunning, setPythonRunning] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -347,6 +696,9 @@ export default function WorkspacePage() {
     setPreviewUrl(null);
     setPreviewText(null);
     setPreviewMime("");
+    setPythonOutput(null);
+    setPythonError(null);
+    setPythonRunning(false);
     try {
       const list = await listDir(path);
       setEntries(list);
@@ -398,6 +750,9 @@ export default function WorkspacePage() {
     setSelected(entry);
     setPreviewUrl(null);
     setPreviewText(null);
+    setPythonOutput(null);
+    setPythonError(null);
+    setPythonRunning(false);
     const mime = entry.mimeType ?? "";
     setPreviewMime(mime);
     try {
@@ -431,10 +786,31 @@ export default function WorkspacePage() {
   const handleDownload = async (entry: FileEntry) => {
     if (entry.kind === "directory") return;
     const blob = await readFileBlob(entry.path);
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = entry.name; a.click();
-    URL.revokeObjectURL(url);
+    downloadBlob(blob, entry.name);
+  };
+
+  const handleRunPython = async () => {
+    if (!selected || selected.kind !== "file" || !selected.name.toLowerCase().endsWith(".py")) return;
+
+    setPythonRunning(true);
+    setPythonOutput(null);
+    setPythonError(null);
+
+    try {
+      const code = await (await readFileBlob(selected.path)).text();
+      const result = await execPython(code);
+      const parts: string[] = [];
+      if (result.stdout) parts.push(result.stdout);
+      if (result.stderr) parts.push(`[stderr] ${result.stderr}`);
+      if (result.result !== undefined && result.result !== null) parts.push(`→ ${String(result.result)}`);
+      const files = Object.keys(result.outputFiles ?? {});
+      if (files.length > 0) parts.push(`Files: ${files.join(", ")}`);
+      setPythonOutput(parts.join("\n") || "(no output)");
+    } catch (error) {
+      setPythonError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPythonRunning(false);
+    }
   };
 
   const handleDelete = async (entry: FileEntry) => {
@@ -671,11 +1047,15 @@ export default function WorkspacePage() {
                 <iframe src={previewUrl} className="w-full h-64 rounded border border-border" title={selected.name} />
               )}
 
-              {previewText !== null && previewMime === "text/csv" && (
-                <CsvTable text={previewText} />
+              {previewText !== null && previewMime === "text/csv" && activeId && (
+                <CsvPreviewWithSql text={previewText} filePath={selected.path} workspaceId={activeId} />
               )}
 
-              {previewText !== null && previewMime !== "text/csv" && (
+              {previewText !== null && previewMime !== "text/csv" && selected.name.toLowerCase().endsWith(".py") && (
+                <PythonPreview code={previewText} output={pythonOutput} error={pythonError} running={pythonRunning} />
+              )}
+
+              {previewText !== null && previewMime !== "text/csv" && !selected.name.toLowerCase().endsWith(".py") && (
                 <pre className="text-xs font-mono whitespace-pre-wrap break-all bg-muted/30 rounded p-2 max-h-72 overflow-auto">
                   {previewText}
                 </pre>
@@ -696,12 +1076,23 @@ export default function WorkspacePage() {
             </div>
 
             <div className="flex-none border-t border-border p-2">
-              <button
-                onClick={() => handleDownload(selected)}
-                className="w-full flex items-center justify-center gap-2 text-xs py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90"
-              >
-                <Download className="h-3.5 w-3.5" /> Download
-              </button>
+              <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
+                {selected.name.toLowerCase().endsWith(".py") && (
+                  <button
+                    onClick={handleRunPython}
+                    disabled={pythonRunning}
+                    className="w-full flex items-center justify-center gap-2 text-xs py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    <Play className="h-3.5 w-3.5" /> {pythonRunning ? "Running…" : "Run"}
+                  </button>
+                )}
+                <button
+                  onClick={() => handleDownload(selected)}
+                  className="w-full flex items-center justify-center gap-2 text-xs py-1.5 rounded bg-primary text-primary-foreground hover:bg-primary/90"
+                >
+                  <Download className="h-3.5 w-3.5" /> Download
+                </button>
+              </div>
             </div>
           </div>
         )}

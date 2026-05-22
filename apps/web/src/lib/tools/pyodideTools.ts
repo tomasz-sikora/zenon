@@ -4,7 +4,7 @@
 
 import type { SimpleToolRegistration } from "./registry";
 import { toolRegistry } from "./registry";
-import { writeFile, guessMime } from "@/lib/storage/opfs";
+import { writeFile } from "@/lib/storage/opfs";
 import { useWorkspaceStore } from "@/store/workspaceStore";
 import { workspacePaths } from "@/lib/storage/workspace";
 
@@ -195,7 +195,48 @@ const pipInstallTool: SimpleToolRegistration = {
   },
 };
 
+const runPythonInWorkspaceTool: SimpleToolRegistration = {
+  name: "run_python_in_workspace",
+  description:
+    "Write a Python script to the workspace and execute it. The script is saved to the workspace file system and then run via Pyodide. Use this when you want to create and run a Python script that persists in the workspace.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      filename: {
+        type: "string",
+        description: "Filename for the script (e.g. 'analysis.py')",
+      },
+      code: {
+        type: "string",
+        description: "Python code to write and execute",
+      },
+    },
+    required: ["filename", "code"],
+  },
+  execute: async (args: Record<string, unknown>) => {
+    const filename = args["filename"] as string;
+    const code = args["code"] as string;
+    const wsId = useWorkspaceStore.getState().currentWorkspaceId;
+    if (!wsId) throw new Error("No active workspace");
+
+    const filePath = `${workspacePaths.files(wsId)}/${filename}`;
+    await writeFile(filePath, code);
+
+    const { result, stdout, stderr, figures, outputFiles } = await execPython(code);
+    const output: Record<string, unknown> = { saved_to: filePath };
+    if (stdout) output["stdout"] = stdout;
+    if (stderr) output["stderr"] = stderr;
+    if (result !== undefined && result !== null) output["result"] = result;
+    if (figures.length > 0) output["figures"] = figures;
+    const fileNames = Object.keys(outputFiles);
+    if (fileNames.length > 0) output["files_saved_to_workspace"] = fileNames;
+
+    return output;
+  },
+};
+
 toolRegistry.register(pythonExecTool);
 toolRegistry.register(pipInstallTool);
+toolRegistry.register(runPythonInWorkspaceTool);
 
 export { execPython, installPackages };
