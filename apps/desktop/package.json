@@ -1,0 +1,64 @@
+{
+  "name": "@zenon/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Zenon Desktop – WASM-native AI chat platform (Electron)",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter @zenon/web dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "build": "pnpm --filter @zenon/web build && tsc -p tsconfig.json && electron-builder",
+    "build:unpack": "pnpm --filter @zenon/web build && tsc -p tsconfig.json && electron-builder --dir",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "clean": "rm -rf dist dist-electron .turbo"
+  },
+  "build": {
+    "appId": "com.zenon.desktop",
+    "productName": "Zenon",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "dist-electron/**/*",
+      {
+        "from": "../web/dist",
+        "to": "web",
+        "filter": ["**/*"]
+      }
+    ],
+    "protocols": [
+      {
+        "name": "Zenon Protocol",
+        "schemes": ["zenon", "web+zenon"]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": ["dmg", "zip"],
+      "icon": "../web/public/icon-512.png"
+    },
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "../web/public/icon-512.png"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Utility",
+      "icon": "../web/public/icon-512.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "electron": "^35.1.2",
+    "electron-builder": "^26.0.12",
+    "typescript": "^5.8.3",
+    "wait-on": "^8.0.3"
+  }
+}
