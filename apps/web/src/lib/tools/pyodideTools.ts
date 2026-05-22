@@ -101,7 +101,7 @@ function getWorker(): Worker {
   return worker;
 }
 
-async function waitForReady(timeoutMs = 30000): Promise<void> {
+async function waitForReady(timeoutMs = 120_000): Promise<void> {
   const start = Date.now();
   while (!workerReady) {
     if (workerError) throw new Error(`Pyodide failed to load: ${workerError}`);
@@ -109,6 +109,8 @@ async function waitForReady(timeoutMs = 30000): Promise<void> {
     await new Promise((r) => setTimeout(r, 200));
   }
 }
+
+const EXEC_TIMEOUT_MS = 120_000; // 2 minutes per execution
 
 async function execPython(code: string): Promise<{
   result: unknown;
@@ -122,7 +124,15 @@ async function execPython(code: string): Promise<{
   await waitForReady();
   const id = `req-${++requestCounter}`;
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve: resolve as (v: unknown) => void, reject, stdout: [], stderr: [], figures: [] });
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error("Python execution timed out after 2 minutes"));
+    }, EXEC_TIMEOUT_MS);
+    pending.set(id, {
+      resolve: (v: unknown) => { clearTimeout(timer); (resolve as (v: unknown) => void)(v); },
+      reject: (e: Error) => { clearTimeout(timer); reject(e); },
+      stdout: [], stderr: [], figures: [],
+    });
     w.postMessage({ id, type: "exec", code });
   }) as Promise<{ result: unknown; stdout: string; stderr: string; figures: string[]; outputFiles: Record<string, string> }>;
 }
@@ -137,22 +147,27 @@ async function installPackages(packages: string[]): Promise<void> {
   });
 }
 
+const MAX_TOOL_OUTPUT_CHARS = 8000;
+
+function truncateOutput(text: string, label = "output"): string {
+  if (text.length <= MAX_TOOL_OUTPUT_CHARS) return text;
+  return text.slice(0, MAX_TOOL_OUTPUT_CHARS) + `\n... [${label} truncated — ${text.length} chars total, showing first ${MAX_TOOL_OUTPUT_CHARS}]`;
+}
+
 const pythonExecTool: SimpleToolRegistration = {
   name: "python_exec",
   description:
-    "Execute Python code using Pyodide (WASM Python interpreter running in the browser). " +
-    "Supports standard library, numpy, pandas, matplotlib, scipy, and micropip for additional packages. " +
-    "Use print() for output. matplotlib.pyplot.show() saves figures as images. " +
-    "Any files created in the current working directory (e.g. open('output.csv','w'), plt.savefig('chart.png'), " +
-    "os.makedirs('project') + open('project/main.py','w')) are automatically saved to the workspace and " +
-    "will appear in the Workspace file browser. Always write to relative paths — never use absolute paths " +
-    "like /tmp/ or hardcoded OPFS paths. Returns stdout, stderr, any printed result, and base64-encoded PNG figures.",
+    "Run Python code in the browser via Pyodide (WASM). " +
+    "Pre-installed: numpy, pandas, matplotlib, scipy. Use pip_install for others. " +
+    "Use print() for output. plt.show() captures charts as PNG. " +
+    "Files written to relative paths (e.g. open('out.csv','w')) auto-save to workspace. " +
+    "IMPORTANT: Do NOT pass file content as code argument — use read_file tool first, then reference data in code.",
   inputSchema: {
     type: "object",
     properties: {
       code: {
         type: "string",
-        description: "Python code to execute",
+        description: "Python source code to execute",
       },
     },
     required: ["code"],
@@ -162,9 +177,12 @@ const pythonExecTool: SimpleToolRegistration = {
     const { result, stdout, stderr, figures, outputFiles } = await execPython(code);
 
     const output: Record<string, unknown> = {};
-    if (stdout) output["stdout"] = stdout;
-    if (stderr) output["stderr"] = stderr;
-    if (result !== undefined && result !== null) output["result"] = result;
+    if (stdout) output["stdout"] = truncateOutput(stdout, "stdout");
+    if (stderr) output["stderr"] = truncateOutput(stderr, "stderr");
+    if (result !== undefined && result !== null) {
+      const resultStr = typeof result === "string" ? result : JSON.stringify(result);
+      output["result"] = truncateOutput(resultStr, "result");
+    }
     if (figures.length > 0) output["figures"] = figures;
     const fileNames = Object.keys(outputFiles);
     if (fileNames.length > 0) output["files_saved_to_workspace"] = fileNames;
@@ -175,15 +193,14 @@ const pythonExecTool: SimpleToolRegistration = {
 
 const pipInstallTool: SimpleToolRegistration = {
   name: "pip_install",
-  description: "Install Python packages using micropip (Pyodide's package manager). " +
-    "Use this before importing packages that aren't available by default.",
+  description: "Install Python packages via micropip before importing them in python_exec.",
   inputSchema: {
     type: "object",
     properties: {
       packages: {
         type: "array",
         items: { type: "string" },
-        description: "List of package names to install",
+        description: "Package names to install (e.g. ['requests', 'beautifulsoup4'])",
       },
     },
     required: ["packages"],
@@ -195,48 +212,7 @@ const pipInstallTool: SimpleToolRegistration = {
   },
 };
 
-const runPythonInWorkspaceTool: SimpleToolRegistration = {
-  name: "run_python_in_workspace",
-  description:
-    "Write a Python script to the workspace and execute it. The script is saved to the workspace file system and then run via Pyodide. Use this when you want to create and run a Python script that persists in the workspace.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      filename: {
-        type: "string",
-        description: "Filename for the script (e.g. 'analysis.py')",
-      },
-      code: {
-        type: "string",
-        description: "Python code to write and execute",
-      },
-    },
-    required: ["filename", "code"],
-  },
-  execute: async (args: Record<string, unknown>) => {
-    const filename = args["filename"] as string;
-    const code = args["code"] as string;
-    const wsId = useWorkspaceStore.getState().currentWorkspaceId;
-    if (!wsId) throw new Error("No active workspace");
-
-    const filePath = `${workspacePaths.files(wsId)}/${filename}`;
-    await writeFile(filePath, code);
-
-    const { result, stdout, stderr, figures, outputFiles } = await execPython(code);
-    const output: Record<string, unknown> = { saved_to: filePath };
-    if (stdout) output["stdout"] = stdout;
-    if (stderr) output["stderr"] = stderr;
-    if (result !== undefined && result !== null) output["result"] = result;
-    if (figures.length > 0) output["figures"] = figures;
-    const fileNames = Object.keys(outputFiles);
-    if (fileNames.length > 0) output["files_saved_to_workspace"] = fileNames;
-
-    return output;
-  },
-};
-
 toolRegistry.register(pythonExecTool);
 toolRegistry.register(pipInstallTool);
-toolRegistry.register(runPythonInWorkspaceTool);
 
 export { execPython, installPackages };
