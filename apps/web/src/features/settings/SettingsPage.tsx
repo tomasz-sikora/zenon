@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "react-router-dom";
-import { Eye, EyeOff, Save, Trash2, Plus, ChevronDown, Wifi, WifiOff, Loader2, FileText, X } from "lucide-react";
+import { Eye, EyeOff, Save, Trash2, Plus, ChevronDown, Wifi, WifiOff, Loader2, FileText, X, Download, CheckCircle, Database } from "lucide-react";
 import { useProviderStore } from "@/store/providerStore";
 import { useMcpStore, type McpServerConfig, type McpTransport } from "@/store/mcpStore";
 import { useSkillStore } from "@/store/skillStore";
+import { useRagStore, EMBEDDING_MODELS, type EmbeddingModelInfo } from "@/store/ragStore";
 import { connectMcpServer, testMcpConnection } from "@/lib/mcp/client";
+import { predownloadModel } from "@/lib/rag/pipeline";
 import { useTheme } from "@/app/ThemeProvider";
 import { cn } from "@/lib/utils";
 import type { ModelInfo, ProviderConfig } from "@zenon/shared-types";
@@ -13,8 +15,8 @@ import { toast } from "@/components/ui/Toaster";
 export default function SettingsPage() {
   const location = useLocation();
   const initialTab = (location.state as { tab?: string } | null)?.tab;
-  const [activeTab, setActiveTab] = useState<"providers" | "mcp" | "general" | "proxy" | "skills">(
-    initialTab === "skills" ? "skills" : "providers"
+  const [activeTab, setActiveTab] = useState<"providers" | "mcp" | "general" | "proxy" | "skills" | "rag">(
+    initialTab === "skills" ? "skills" : initialTab === "rag" ? "rag" : "providers"
   );
 
   return (
@@ -26,7 +28,7 @@ export default function SettingsPage() {
       {/* Tabs */}
       <div className="border-b border-border px-6">
         <div className="flex gap-4">
-          {(["providers", "mcp", "proxy", "skills", "general"] as const).map((tab) => (
+          {(["providers", "mcp", "proxy", "skills", "rag", "general"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -37,7 +39,7 @@ export default function SettingsPage() {
                   : "border-transparent text-muted-foreground hover:text-foreground",
               )}
             >
-              {tab === "mcp" ? "MCP Servers" : tab}
+              {tab === "mcp" ? "MCP Servers" : tab === "rag" ? "RAG" : tab}
             </button>
           ))}
         </div>
@@ -48,6 +50,7 @@ export default function SettingsPage() {
         {activeTab === "mcp" && <McpSettings />}
         {activeTab === "proxy" && <ProxySettings />}
         {activeTab === "skills" && <SkillsSettings />}
+        {activeTab === "rag" && <RagSettings />}
         {activeTab === "general" && <GeneralSettings />}
       </div>
     </div>
@@ -896,6 +899,231 @@ function SkillsSettings() {
             <Plus className="h-4 w-4" /> Add global skill file
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+function RagSettings() {
+  const {
+    embeddingModelId, chunking, csvHandling, downloadedModels,
+    setEmbeddingModel, setChunking, setCsvHandling, markModelDownloaded,
+  } = useRagStore();
+
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [chunkSizeInput, setChunkSizeInput] = useState(String(chunking.chunkSize));
+  const [overlapInput, setOverlapInput] = useState(String(chunking.overlap));
+
+  const handleDownload = async (modelId: string) => {
+    setDownloading(modelId);
+    setDownloadProgress(0);
+    try {
+      await predownloadModel(modelId, (progress) => {
+        setDownloadProgress(progress);
+      });
+      markModelDownloaded(modelId);
+      toast.success(`Model "${modelId}" downloaded and cached`);
+    } catch (e) {
+      toast.error("Download failed", String(e));
+    } finally {
+      setDownloading(null);
+      setDownloadProgress(0);
+    }
+  };
+
+  const handleSaveChunking = () => {
+    const chunkSize = Math.max(100, Math.min(5000, Number(chunkSizeInput) || 500));
+    const overlap = Math.max(0, Math.min(500, Number(overlapInput) || 50));
+    setChunking({ chunkSize, overlap });
+    setChunkSizeInput(String(chunkSize));
+    setOverlapInput(String(overlap));
+    toast.success("Chunking config saved");
+  };
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      {/* Embedding Model */}
+      <div>
+        <h2 className="text-sm font-semibold mb-1">Embedding Model</h2>
+        <p className="text-sm text-muted-foreground mb-3">
+          Select the model used for generating document embeddings. Pre-download models to avoid delays during indexing.
+        </p>
+
+        <div className="space-y-2">
+          {EMBEDDING_MODELS.map((model) => {
+            const isSelected = embeddingModelId === model.id;
+            const isDownloaded = downloadedModels.includes(model.id);
+            const isDownloading = downloading === model.id;
+
+            return (
+              <div
+                key={model.id}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg border px-4 py-3 transition-colors",
+                  isSelected ? "border-primary bg-primary/5" : "border-border hover:border-primary/30",
+                )}
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium">{model.name}</p>
+                    {isDownloaded && (
+                      <span className="flex items-center gap-1 text-xs text-green-600">
+                        <CheckCircle className="h-3 w-3" /> Cached
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {model.dimensions}d · ~{model.sizeMB} MB
+                  </p>
+                  {isDownloading && (
+                    <div className="mt-2 w-full bg-muted rounded-full h-1.5">
+                      <div
+                        className="bg-primary h-1.5 rounded-full transition-all"
+                        style={{ width: `${downloadProgress}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {!isDownloaded && !isDownloading && (
+                    <button
+                      onClick={() => handleDownload(model.id)}
+                      className="flex items-center gap-1 rounded-md border border-border px-2.5 py-1.5 text-xs hover:bg-muted transition-colors"
+                      title="Pre-download model"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Download
+                    </button>
+                  )}
+                  {isDownloading && (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      {Math.round(downloadProgress)}%
+                    </span>
+                  )}
+                  {!isSelected && (
+                    <button
+                      onClick={() => setEmbeddingModel(model.id)}
+                      className="rounded-md bg-primary text-primary-foreground px-3 py-1.5 text-xs hover:bg-primary/90"
+                    >
+                      Select
+                    </button>
+                  )}
+                  {isSelected && (
+                    <span className="text-xs font-medium text-primary px-3 py-1.5">Active</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Chunking Config */}
+      <div>
+        <h2 className="text-sm font-semibold mb-1">Chunking Configuration</h2>
+        <p className="text-sm text-muted-foreground mb-3">
+          Control how documents are split into chunks for indexing. Larger chunks retain more context; smaller chunks improve precision.
+        </p>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Chunk Size (characters)</label>
+            <input
+              type="number"
+              min={100}
+              max={5000}
+              value={chunkSizeInput}
+              onChange={(e) => setChunkSizeInput(e.target.value)}
+              className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <p className="text-xs text-muted-foreground">100–5000 characters per chunk</p>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Overlap (characters)</label>
+            <input
+              type="number"
+              min={0}
+              max={500}
+              value={overlapInput}
+              onChange={(e) => setOverlapInput(e.target.value)}
+              className="w-full rounded-md border border-border bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <p className="text-xs text-muted-foreground">0–500 characters overlap between chunks</p>
+          </div>
+        </div>
+        <button
+          onClick={handleSaveChunking}
+          className="mt-3 flex items-center gap-1 rounded-md bg-primary text-primary-foreground px-4 py-1.5 text-sm hover:bg-primary/90"
+        >
+          <Save className="h-3.5 w-3.5" />
+          Save Chunking Config
+        </button>
+      </div>
+
+      {/* CSV Handling */}
+      <div>
+        <h2 className="text-sm font-semibold mb-1">CSV / Table File Handling</h2>
+        <p className="text-sm text-muted-foreground mb-3">
+          Choose how CSV files are processed in the RAG pipeline.
+        </p>
+
+        <div className="space-y-2">
+          <label
+            className={cn(
+              "flex items-start gap-3 rounded-lg border px-4 py-3 cursor-pointer transition-colors",
+              csvHandling === "chunk" ? "border-primary bg-primary/5" : "border-border hover:border-primary/30",
+            )}
+          >
+            <input
+              type="radio"
+              name="csvHandling"
+              checked={csvHandling === "chunk"}
+              onChange={() => setCsvHandling("chunk")}
+              className="mt-0.5"
+            />
+            <div>
+              <p className="text-sm font-medium">Text Chunking (default)</p>
+              <p className="text-xs text-muted-foreground">
+                CSV content is split into text chunks and embedded for semantic search, like any other document.
+              </p>
+            </div>
+          </label>
+          <label
+            className={cn(
+              "flex items-start gap-3 rounded-lg border px-4 py-3 cursor-pointer transition-colors",
+              csvHandling === "sql" ? "border-primary bg-primary/5" : "border-border hover:border-primary/30",
+            )}
+          >
+            <input
+              type="radio"
+              name="csvHandling"
+              checked={csvHandling === "sql"}
+              onChange={() => setCsvHandling("sql")}
+              className="mt-0.5"
+            />
+            <div>
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-medium">SQL Table Storage</p>
+                <Database className="h-3.5 w-3.5 text-muted-foreground" />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                CSV files are stored as queryable tables. Agents can filter, aggregate, and query data using the <code className="font-mono bg-muted px-1 rounded">query_csv_table</code> tool or Python with pandas/sqlite3.
+              </p>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      {/* Fallback Info */}
+      <div className="rounded-lg border border-border px-4 py-3 bg-muted/20">
+        <p className="text-sm font-medium mb-1">Text Search Fallback</p>
+        <p className="text-xs text-muted-foreground">
+          If the embedding model fails to load or is unavailable, the RAG pipeline automatically
+          falls back to keyword-based text search (BM25-like scoring). Documents already indexed
+          without embeddings will use text search until re-indexed with an embedding model.
+        </p>
       </div>
     </div>
   );

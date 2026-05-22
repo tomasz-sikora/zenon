@@ -100,7 +100,9 @@ Tools are called automatically by the model when it decides they are useful. You
 | `read_excel` | Parses an Excel file (.xlsx) |
 | `read_word` | Extracts text from a Word document (.docx) |
 | `create_chart` | Creates a Chart.js chart and saves it as an image |
-| `rag_search` | Searches the agent's indexed knowledge files |
+| `rag_search` | Searches the agent's indexed knowledge files (with text-search fallback) |
+| `query_csv_table` | Queries a CSV file stored as a SQL table (filter, aggregate) |
+| `list_csv_tables` | Lists all CSV tables available in the workspace |
 
 ### Python execution notes
 
@@ -169,6 +171,45 @@ Go to **RAG** in the sidebar to manage indexed documents.
 When a conversation uses that agent, the `rag_search` tool will be available and the model can retrieve relevant passages from the indexed documents.
 
 > **Note:** First-time indexing downloads the embedding model (~80 MB) and caches it in the browser.
+
+### RAG Configuration
+
+Go to **Settings → RAG** to configure the RAG pipeline:
+
+#### Embedding Model
+
+Choose from several pre-built embedding models:
+
+| Model | Dimensions | Size |
+|---|---|---|
+| **all-MiniLM-L6-v2** (default) | 384 | ~80 MB |
+| **BGE Small EN v1.5** | 384 | ~130 MB |
+| **all-MiniLM-L12-v2** | 384 | ~130 MB |
+| **GTE Small** | 384 | ~70 MB |
+
+You can **pre-download** models from the settings page so they are cached and ready before you start indexing. Click the **Download** button next to any model, then click **Select** to make it the active model.
+
+#### Chunking Configuration
+
+Control how documents are split into chunks:
+
+- **Chunk Size** (100–5000 characters): Larger chunks retain more context; smaller chunks improve search precision. Default: 500.
+- **Overlap** (0–500 characters): How much text overlaps between adjacent chunks to preserve context at boundaries. Default: 50.
+
+#### CSV / Table File Handling
+
+Choose how CSV files are processed:
+
+| Mode | Description |
+|---|---|
+| **Text Chunking** (default) | CSV content is split into text chunks and embedded for semantic search, like any other document. |
+| **SQL Table Storage** | CSV files are stored as structured, queryable tables. Agents can use the `query_csv_table` tool to filter and query data, or use Python with pandas/sqlite3. |
+
+When SQL mode is enabled, uploading a CSV file creates a named table (derived from the filename). You can see all tables in the **SQL Tables** section of the RAG page.
+
+#### Text Search Fallback
+
+If the embedding model fails to load (e.g., WebAssembly issues, network problems), the RAG pipeline **automatically falls back to keyword-based text search** using BM25-like scoring. This ensures searches always return results even without embeddings. Documents indexed without embeddings will use text search until they are re-indexed with an embedding model.
 
 ---
 
