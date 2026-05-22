@@ -3,25 +3,30 @@ import type { ToolResult } from "@zenon/shared-types";
 import { ASK_USER_CONFIRM_OPTIONS, isAskUserQuestionType } from "./askUser";
 
 const MAX_ASK_USER_OPTIONS = 12;
+const MAX_TOOL_OUTPUT_CHARS = 8000;
+
+function truncateText(text: string, label = "content"): string {
+  if (text.length <= MAX_TOOL_OUTPUT_CHARS) return text;
+  return text.slice(0, MAX_TOOL_OUTPUT_CHARS) + `\n... [${label} truncated — ${text.length} chars total]`;
+}
 
 /** fetch_webpage tool — reads a URL and returns readable text */
 toolRegistry.register({
   definition: {
     name: "fetch_webpage",
     description:
-      "Fetch the content of a web page and return its readable text. Useful for reading documentation, articles, or any web resource.",
+      "Fetch a web page and return its readable text content. Useful for reading docs, articles, or web resources.",
     category: "web",
     inputSchema: {
       type: "object",
       properties: {
         url: {
           type: "string",
-          description: "The URL of the web page to fetch",
+          description: "URL to fetch",
         },
         selector: {
           type: "string",
-          description:
-            "Optional CSS selector to extract a specific part of the page",
+          description: "Optional CSS selector to extract a specific section",
         },
       },
       required: ["url"],
@@ -79,8 +84,9 @@ toolRegistry.register({
       .split("\n")
       .map((l) => l.trim())
       .filter((l) => l.length > 0)
-      .join("\n")
-      .slice(0, 20000); // limit to 20k chars
+      .join("\n");
+
+    content = truncateText(content, "webpage");
 
     return {
       toolCallId: "",
@@ -96,7 +102,7 @@ toolRegistry.register({
   definition: {
     name: "ask_user",
     description:
-      "Ask the human in chat for follow-up input and pause the agent until they respond. Supports open, confirmation, single-choice, and multiple-choice questions.",
+      "Ask the user a question and pause until they respond. Supports open text, yes/no, single-choice, and multiple-choice.",
     category: "utility",
     inputSchema: {
       type: "object",
@@ -194,7 +200,7 @@ toolRegistry.register({
 toolRegistry.register({
   definition: {
     name: "datetime",
-    description: "Get the current date and time in various formats",
+    description: "Get the current date/time in ISO, locale, or Unix format.",
     category: "utility",
     inputSchema: {
       type: "object",
@@ -250,47 +256,3 @@ toolRegistry.register({
   },
 });
 
-/** calculator tool */
-toolRegistry.register({
-  definition: {
-    name: "calculator",
-    description:
-      "Evaluate a mathematical expression. Supports standard arithmetic, Math functions, and constants.",
-    category: "utility",
-    inputSchema: {
-      type: "object",
-      properties: {
-        expression: {
-          type: "string",
-          description:
-            "JavaScript math expression, e.g., '2 + 2', 'Math.sqrt(16)', 'Math.PI * 5 ** 2'",
-        },
-      },
-      required: ["expression"],
-    },
-  },
-  executor: async (input): Promise<ToolResult> => {
-    const { expression } = input as { expression: string };
-
-    // Safe evaluation — only allow math operations
-    const sanitized = expression.replace(/[^0-9+\-*/().,%^eMathsqrlogpitansinacoflourbiexd\s]/g, "");
-
-    try {
-      // eslint-disable-next-line no-new-func
-      const result = new Function(`"use strict"; return (${sanitized})`)() as unknown;
-      return {
-        toolCallId: "",
-        toolName: "calculator",
-        isError: false,
-        content: `${expression} = ${String(result)}`,
-      };
-    } catch (err) {
-      return {
-        toolCallId: "",
-        toolName: "calculator",
-        isError: true,
-        content: `Failed to evaluate expression: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-  },
-});

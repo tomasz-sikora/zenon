@@ -13,16 +13,24 @@ import {
   guessMime,
 } from "@/lib/storage/opfs";
 
+const MAX_READ_CHARS = 8000;
+
+function truncateFileContent(text: string): string {
+  if (text.length <= MAX_READ_CHARS) return text;
+  return text.slice(0, MAX_READ_CHARS) + `\n... [truncated — ${text.length} chars total, showing first ${MAX_READ_CHARS}. Use python_exec to process large files]`;
+}
+
 toolRegistry.register({
   name: "read_file",
   description:
-    "Read the text content of a file from the workspace. Returns the file content as a string.",
+    "Read a text file from the workspace. Returns truncated content for large files — use python_exec for full processing. " +
+    "IMPORTANT: Do NOT use this to read files and then pass content to python_exec — instead use Python's open() directly.",
   inputSchema: {
     type: "object",
     properties: {
       path: {
         type: "string",
-        description: "Path to the file within the workspace (e.g. 'workspaces/ws-id/files/data.csv')",
+        description: "Full workspace path (e.g. 'workspaces/ws-id/files/data.csv')",
       },
     },
     required: ["path"],
@@ -30,24 +38,18 @@ toolRegistry.register({
   execute: async (args: Record<string, unknown>) => {
     const path = args["path"] as string;
     const text = await readFileText(path);
-    return { content: text, path, length: text.length };
+    return { content: truncateFileContent(text), path, length: text.length };
   },
 });
 
 toolRegistry.register({
   name: "write_file",
-  description: "Write text content to a file in the workspace. Creates the file if it doesn't exist.",
+  description: "Write text to a workspace file. Creates or overwrites the file.",
   inputSchema: {
     type: "object",
     properties: {
-      path: {
-        type: "string",
-        description: "Path where the file will be written",
-      },
-      content: {
-        type: "string",
-        description: "Text content to write",
-      },
+      path: { type: "string", description: "Workspace file path" },
+      content: { type: "string", description: "Text content to write" },
     },
     required: ["path", "content"],
   },
@@ -61,18 +63,17 @@ toolRegistry.register({
 
 toolRegistry.register({
   name: "list_files",
-  description:
-    "List files and directories at a given workspace path. Returns an array of file entries with name, type, and size.",
+  description: "List files and directories at a workspace path.",
   inputSchema: {
     type: "object",
     properties: {
       path: {
         type: "string",
-        description: "Directory path to list (e.g. 'workspaces/ws-id/files')",
+        description: "Directory path (e.g. 'workspaces/ws-id/files')",
       },
       recursive: {
         type: "boolean",
-        description: "If true, recursively list all files in subdirectories",
+        description: "List all files recursively (default: false)",
         default: false,
       },
     },
@@ -92,10 +93,7 @@ toolRegistry.register({
   inputSchema: {
     type: "object",
     properties: {
-      path: {
-        type: "string",
-        description: "Path to the file to delete",
-      },
+      path: { type: "string", description: "Path to delete" },
     },
     required: ["path"],
   },
@@ -108,11 +106,11 @@ toolRegistry.register({
 
 toolRegistry.register({
   name: "append_file",
-  description: "Append text to an existing file in the workspace. Creates the file if it doesn't exist.",
+  description: "Append text to a workspace file. Creates the file if it doesn't exist.",
   inputSchema: {
     type: "object",
     properties: {
-      path: { type: "string", description: "Path to the file" },
+      path: { type: "string", description: "File path" },
       content: { type: "string", description: "Text to append" },
     },
     required: ["path", "content"],

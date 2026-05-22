@@ -34,7 +34,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     instructions:
       "You are a helpful, harmless, and honest AI assistant. Use Python and workspace file tools whenever analysis, drafts, or local artifacts would improve the answer.",
     model: { providerId: "openai", modelId: "gpt-4o" },
-    tools: withDefaultAgentTools(["fetch_webpage", "datetime", "calculator"]),
+    tools: withDefaultAgentTools(["fetch_webpage", "datetime"]),
     knowledgeFiles: [],
     ragEnabled: false,
     isBuiltIn: true,
@@ -56,7 +56,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     instructions:
       "You are an expert Python developer. Solve tasks with runnable code, execute it to verify results, and save useful scripts, outputs, and notes to workspace files.",
     model: { providerId: "openai", modelId: "gpt-4o" },
-    tools: withDefaultAgentTools(["pip_install", "calculator"]),
+    tools: withDefaultAgentTools(["pip_install"]),
     knowledgeFiles: [],
     ragEnabled: false,
     isBuiltIn: true,
@@ -166,7 +166,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     instructions:
       "You design technical and operational workflows. Create structured plans, diagrams, and implementation notes as reusable workspace files.",
     model: { providerId: "openai", modelId: "gpt-4o" },
-    tools: withDefaultAgentTools(["create_diagram", "create_chart", "calculator", "datetime"]),
+    tools: withDefaultAgentTools(["create_diagram", "create_chart", "datetime"]),
     knowledgeFiles: [],
     ragEnabled: false,
     isBuiltIn: true,

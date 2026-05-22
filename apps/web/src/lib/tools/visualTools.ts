@@ -10,8 +10,7 @@ import { writeFile } from "@/lib/storage/opfs";
 toolRegistry.register({
   name: "create_chart",
   description:
-    "Create a chart (bar, line, pie, scatter, doughnut) and save it as a PNG image. " +
-    "Returns the file path and a data URI preview.",
+    "Create a chart (bar, line, pie, scatter, doughnut) and save as PNG.",
   inputSchema: {
     type: "object",
     properties: {
@@ -94,8 +93,7 @@ toolRegistry.register({
 toolRegistry.register({
   name: "create_diagram",
   description:
-    "Render a Mermaid diagram (flowchart, sequence, class, ER, Gantt, etc.) to SVG. " +
-    "Returns the SVG as a string and saves to the specified path.",
+    "Render a Mermaid diagram (flowchart, sequence, class, ER, Gantt, etc.) to SVG.",
   inputSchema: {
     type: "object",
     properties: {

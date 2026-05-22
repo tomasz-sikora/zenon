@@ -6,10 +6,17 @@
 import { toolRegistry } from "./registry";
 import { readFile, readFileText, writeFile } from "@/lib/storage/opfs";
 
+const MAX_TEXT_CHARS = 8000;
+
+function truncateText(text: string, label = "content"): string {
+  if (text.length <= MAX_TEXT_CHARS) return text;
+  return text.slice(0, MAX_TEXT_CHARS) + `\n... [${label} truncated — ${text.length} chars total. Use python_exec for full processing]`;
+}
+
 // ─── PDF read ────────────────────────────────────────────────────────────────
 toolRegistry.register({
   name: "read_pdf",
-  description: "Extract text content from a PDF file. Returns the text from all pages.",
+  description: "Extract text from a PDF file. Returns truncated text — use python_exec for large PDFs.",
   inputSchema: {
     type: "object",
     properties: {
@@ -31,14 +38,14 @@ toolRegistry.register({
       const content = await page.getTextContent();
       pages.push(content.items.map((item) => ("str" in item ? item.str : "")).join(" "));
     }
-    return { pages, numPages: pdf.numPages, text: pages.join("\n\n") };
+    return { pages: pages.length, numPages: pdf.numPages, text: truncateText(pages.join("\n\n"), "PDF text") };
   },
 });
 
 // ─── PDF create ──────────────────────────────────────────────────────────────
 toolRegistry.register({
   name: "create_pdf",
-  description: "Create a PDF file from text content. Returns the path to the created PDF.",
+  description: "Create a PDF from text content. Returns the output path.",
   inputSchema: {
     type: "object",
     properties: {
@@ -96,7 +103,7 @@ toolRegistry.register({
 // ─── Excel read ──────────────────────────────────────────────────────────────
 toolRegistry.register({
   name: "read_excel",
-  description: "Read an Excel (.xlsx/.xls) file. Returns sheet names and data as JSON.",
+  description: "Read an Excel file (.xlsx/.xls). Returns sheet data as JSON rows.",
   inputSchema: {
     type: "object",
     properties: {
@@ -122,7 +129,7 @@ toolRegistry.register({
 // ─── Excel write ─────────────────────────────────────────────────────────────
 toolRegistry.register({
   name: "write_excel",
-  description: "Write data to an Excel file. Accepts JSON array of arrays (rows x columns).",
+  description: "Write data to an Excel file. Input: JSON array of arrays (rows × columns).",
   inputSchema: {
     type: "object",
     properties: {
@@ -149,7 +156,7 @@ toolRegistry.register({
 // ─── CSV read ─────────────────────────────────────────────────────────────────
 toolRegistry.register({
   name: "read_csv",
-  description: "Read and parse a CSV file. Returns parsed rows as JSON.",
+  description: "Parse a CSV file. Returns rows as JSON (max 1000 rows by default).",
   inputSchema: {
     type: "object",
     properties: {
@@ -174,7 +181,7 @@ toolRegistry.register({
 // ─── Word read ────────────────────────────────────────────────────────────────
 toolRegistry.register({
   name: "read_word",
-  description: "Extract text from a Word (.docx) file.",
+  description: "Extract text from a Word (.docx) file. Returns truncated text for large documents.",
   inputSchema: {
     type: "object",
     properties: {
@@ -187,6 +194,6 @@ toolRegistry.register({
     const path = args["path"] as string;
     const buf = await readFile(path);
     const result = await mammoth.extractRawText({ arrayBuffer: buf });
-    return { text: result.value, messages: result.messages };
+    return { text: truncateText(result.value, "Word document"), messages: result.messages };
   },
 });

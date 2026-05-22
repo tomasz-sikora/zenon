@@ -18,10 +18,8 @@ function csvEscape(value: string): string {
 toolRegistry.register({
   name: "rag_search",
   description:
-    "Search the workspace knowledge base (RAG index) for documents relevant to a query. " +
-    "Returns the most semantically similar text chunks from uploaded documents. " +
-    "Falls back to keyword-based text search if the embedding model is unavailable. " +
-    "Use this before answering questions about documents, files, or uploaded knowledge.",
+    "Search workspace knowledge base for relevant document chunks. " +
+    "Falls back to keyword search if embedding model is unavailable.",
   inputSchema: {
     type: "object",
     properties: {
@@ -67,7 +65,7 @@ toolRegistry.register({
 toolRegistry.register({
   name: "load_file_to_rag",
   description:
-    "Load a file from the workspace into the RAG knowledge base for semantic search. Supports text files, CSV, and other text-based formats. CSV files are also stored as queryable SQL tables.",
+    "Ingest a workspace file into the RAG knowledge base for semantic search. CSV files also become SQL-queryable tables.",
   inputSchema: {
     type: "object",
     properties: {
@@ -104,9 +102,7 @@ toolRegistry.register({
 toolRegistry.register({
   name: "query_csv_table",
   description:
-    "Query a CSV file that has been ingested as a table in the workspace. " +
-    "Supports filtering by column with operators: =, !=, >, <, >=, <=, LIKE. " +
-    "Use list_csv_tables first to see available tables and their columns.",
+    "Query an ingested CSV table with column filters. Use list_csv_tables first to see available tables.",
   inputSchema: {
     type: "object",
     properties: {
@@ -159,7 +155,7 @@ toolRegistry.register({
 toolRegistry.register({
   name: "run_sql_query",
   description:
-    "Run a SQL-like query on CSV tables in the workspace. Supports SELECT with WHERE, ORDER BY, and LIMIT. Use list_csv_tables first to see available tables and columns.",
+    "Run a SQL-like query (SELECT/WHERE/ORDER BY/LIMIT) on ingested CSV tables. Use list_csv_tables first.",
   inputSchema: {
     type: "object",
     properties: {
@@ -258,8 +254,7 @@ toolRegistry.register({
 toolRegistry.register({
   name: "list_csv_tables",
   description:
-    "List all CSV files that have been ingested as queryable tables in a workspace. " +
-    "Shows table names, columns, and row counts.",
+    "List all ingested CSV tables in a workspace with their columns and row counts.",
   inputSchema: {
     type: "object",
     properties: {
