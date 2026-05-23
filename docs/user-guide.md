@@ -228,7 +228,7 @@ Tools discovered from connected MCP servers become available in the agent tool s
 
 ## 8. Local Models (WebGPU)
 
-Select **Local (WebGPU)** as the provider and choose a model (e.g. Gemma 4 2B or Qwen 2.5 3B).
+Select **Local (WebGPU)** as the provider and choose a model (e.g. Llama 3.2 1B, SmolLM2 1.7B, or Qwen 2.5 1.5B).
 
 - The model weights are downloaded once from Hugging Face and cached in IndexedDB.
 - Inference runs fully on-device using your GPU via the WebGPU API.

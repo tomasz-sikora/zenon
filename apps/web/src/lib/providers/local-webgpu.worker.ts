@@ -15,9 +15,13 @@ if (LOCAL_MODEL_BASE) {
   env.allowRemoteModels = false;
 }
 
-// Gemma 4 E2B (Efficient 2B) — Gemma4ForCausalLM is fully supported in transformers.js v4.
-// transformers.js_config in the model's config.json auto-handles use_external_data_format.
-const DEFAULT_MODEL_ID = "onnx-community/gemma-4-E2B-it-ONNX";
+// Llama 3.2 1B Instruct — text-only, ~0.7 GB at q4f16, well-tested in the official
+// `transformers.js` WebGPU examples. Fits comfortably on a MacBook M1 / 16 GB.
+// Multimodal variants like Gemma 3n / Gemma 4 are intentionally avoided here:
+// their ONNX graphs require extra inputs (per_layer_inputs, input_features, …)
+// that `tokenizer.apply_chat_template` does not produce, which surfaces in the
+// browser as `invalid data location: undefined for input "input_ids"`.
+const DEFAULT_MODEL_ID = "onnx-community/Llama-3.2-1B-Instruct-q4f16";
 
 /** A message suitable for Mistral's chat template */
 type EnhancedChatMessage = {
@@ -169,66 +173,8 @@ async function loadModel(modelId = DEFAULT_MODEL_ID): Promise<LoadedPipeline> {
   }
 }
 
-/**
- * Converts Gemma 4's custom arg serialization to JSON.
- * Gemma 4 format: {key:<|"|>strval<|"|>,key2:42,key3:true,key4:{nested:val}}
- * Strings are delimited by <|"|>…<|"|>, keys have no quotes.
- */
-function gemma4ArgsToJson(argsBlock: string): Record<string, unknown> {
-  // Replace string sentinel <|"|>text<|"|> with JSON strings first to avoid key-quoting collisions
-  const withJsonStrings = argsBlock.replace(/<\|"\|>([\s\S]*?)<\|"\|>/g, (_m, s: string) =>
-    JSON.stringify(s),
-  );
-  // Quote bare keys (word chars before colon that are not already inside a quoted string)
-  // We walk char-by-char to avoid quoting colons inside string values
-  let result = "";
-  let inString = false;
-  let escape = false;
-  for (let i = 0; i < withJsonStrings.length; i++) {
-    const ch = withJsonStrings[i];
-    if (escape) {
-      result += ch;
-      escape = false;
-      continue;
-    }
-    if (ch === "\\") {
-      escape = true;
-      result += ch;
-      continue;
-    }
-    if (ch === '"') {
-      inString = !inString;
-      result += ch;
-      continue;
-    }
-    if (!inString && ch === ":") {
-      // Backtrack to find the start of the key and wrap it
-      const keyMatch = result.match(/(\w+)$/);
-      if (keyMatch) {
-        result = result.slice(0, -keyMatch[1].length) + JSON.stringify(keyMatch[1]);
-      }
-    }
-    result += ch;
-  }
-  try {
-    return JSON.parse("{" + result + "}") as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-}
-
 function parseToolCalls(output: string): ParsedToolCall[] {
-  // Gemma 4 format: <|tool_call>call:function_name{key:<|"|>val<|"|>,key2:42}
-  const gemma4Matches = [...output.matchAll(/<\|tool_call>call:(\w+)\{([\s\S]*?)\}/g)];
-  if (gemma4Matches.length > 0) {
-    return gemma4Matches.map((m, i) => ({
-      name: m[1],
-      arguments: gemma4ArgsToJson(m[2]),
-      id: `local_${i}_${Date.now()}`,
-    }));
-  }
-
-  // Qwen2.5 format: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
+  // Qwen2.5 / Llama 3.2 format: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
   const qwenMatches = [...output.matchAll(/<tool_call>([\s\S]*?)<\/tool_call>/g)];
   if (qwenMatches.length > 0) {
     const calls: ParsedToolCall[] = [];
@@ -347,9 +293,8 @@ async function generate(messages: EnhancedChatMessage[], tools?: MistralTool[]) 
     if (toolCalls.length > 0) {
       post({ status: "tool_calls", toolCalls });
     } else {
-      // Strip residual special tokens (Gemma 4, Qwen, Mistral formats)
+      // Strip residual special tokens (Qwen, Llama, Mistral formats)
       const cleanOutput = fullOutput
-        .replace(/<\|tool_call>[\s\S]*?\}/g, "")
         .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
         .replace(/\[\/INST\]|\[INST\]|<s>|<\/s>|\[TOOL_CALLS\]/g, "")
         .trim();

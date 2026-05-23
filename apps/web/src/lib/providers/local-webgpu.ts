@@ -1,8 +1,9 @@
 import type { Message, ToolDefinition, ToolUseContent, ToolResultContent } from "@zenon/shared-types";
 import type { AIProvider, CompletionOptions, StreamCallback } from "./base";
 
-// Gemma 4 E2B (Efficient 2B) — uses Gemma4ForCausalLM, fully supported in transformers.js v4
-const DEFAULT_MODEL_ID = "onnx-community/gemma-4-E2B-it-ONNX";
+// Llama 3.2 1B Instruct — text-only, ~0.7 GB at q4f16, well-tested in the official
+// transformers.js WebGPU examples; fits comfortably on a MacBook M1 / 16 GB.
+const DEFAULT_MODEL_ID = "onnx-community/Llama-3.2-1B-Instruct-q4f16";
 
 type ProgressEvent = {
   status: string;

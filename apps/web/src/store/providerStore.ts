@@ -101,8 +101,8 @@ const BUILTIN_PROVIDERS: ProviderConfig[] = [
     enabled: true,
     models: [
       {
-        id: "onnx-community/gemma-4-E2B-it-ONNX",
-        name: "Gemma 4 2B (WebGPU)",
+        id: "onnx-community/Llama-3.2-1B-Instruct-q4f16",
+        name: "Llama 3.2 1B (WebGPU)",
         contextWindow: 131072,
         supportsVision: false,
         supportsFunctionCalling: true,
@@ -110,8 +110,17 @@ const BUILTIN_PROVIDERS: ProviderConfig[] = [
         isLocal: true,
       },
       {
-        id: "onnx-community/Qwen2.5-3B-Instruct",
-        name: "Qwen 2.5 3B (WebGPU)",
+        id: "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+        name: "SmolLM2 1.7B (WebGPU)",
+        contextWindow: 8192,
+        supportsVision: false,
+        supportsFunctionCalling: false,
+        supportsStreaming: true,
+        isLocal: true,
+      },
+      {
+        id: "onnx-community/Qwen2.5-1.5B-Instruct",
+        name: "Qwen 2.5 1.5B (WebGPU)",
         contextWindow: 32768,
         supportsVision: false,
         supportsFunctionCalling: true,
