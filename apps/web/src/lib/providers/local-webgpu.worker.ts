@@ -3,7 +3,15 @@ import {
   AutoTokenizer,
   InterruptableStoppingCriteria,
   TextStreamer,
+  env,
 } from "@huggingface/transformers";
+
+// When VITE_LOCAL_MODEL_BASE_URL is set (Docker image with pre-fetched models),
+// resolve models from that local static path instead of downloading from HuggingFace.
+const LOCAL_MODEL_BASE = import.meta.env.VITE_LOCAL_MODEL_BASE_URL as string | undefined;
+if (LOCAL_MODEL_BASE) {
+  env.allowRemoteModels = false;
+}
 
 // Gemma 4 E2B (Efficient 2B) — Gemma4ForCausalLM is fully supported in transformers.js v4.
 // transformers.js_config in the model's config.json auto-handles use_external_data_format.
@@ -113,12 +121,16 @@ async function loadModel(modelId = DEFAULT_MODEL_ID): Promise<LoadedPipeline> {
   currentModelId = modelId;
   post({ status: "loading", data: `Loading ${modelId}…` });
 
+  // Resolve from pre-fetched static assets when available, otherwise fall back
+  // to the HuggingFace Hub (dev / non-Docker environments).
+  const resolvedId = LOCAL_MODEL_BASE ? `${LOCAL_MODEL_BASE}/${modelId}` : modelId;
+
   pipelinePromise = (async () => {
-    const tokenizer = await AutoTokenizer.from_pretrained(modelId, {
+    const tokenizer = await AutoTokenizer.from_pretrained(resolvedId, {
       progress_callback: progressCallback,
     });
 
-    const model = await AutoModelForCausalLM.from_pretrained(modelId, {
+    const model = await AutoModelForCausalLM.from_pretrained(resolvedId, {
       dtype: "q4f16",
       device: "webgpu",
       progress_callback: progressCallback,
