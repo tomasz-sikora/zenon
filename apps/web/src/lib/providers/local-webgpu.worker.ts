@@ -12,6 +12,10 @@ import {
 const LOCAL_MODEL_BASE = (import.meta.env.VITE_LOCAL_MODEL_BASE_URL as string | undefined)
   ?.replace(/\/+$/, ""); // strip any trailing slash
 if (LOCAL_MODEL_BASE) {
+  // allowLocalModels defaults to false in web-worker environments; enable it
+  // explicitly so transformers.js checks the static /models/ path before
+  // falling back to the HuggingFace Hub (which is disabled in Docker).
+  env.allowLocalModels = true;
   env.allowRemoteModels = false;
 }
 
