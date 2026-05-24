@@ -210,12 +210,38 @@ The proxy does **not** log, store, or inspect request bodies.
 ```
 nginx (port 80 / 443)
   │
-  ├── /* ────────────────► static SPA files (built into image)
-  ├── /api/* ────────────► proxy:3001
-  ├── /health ───────────► proxy:3001/health
-  └── /ollama/* ─────────► host.docker.internal:11434
+  ├── /*          ─────────────► static SPA files (built into image)
+  ├── /models/*   ─────────────► pre-fetched ONNX model files (404 if missing)
+  ├── /api/*      ─────────────► proxy:3001
+  ├── /health     ─────────────► proxy:3001/health
+  └── /ollama/*   ─────────────► host.docker.internal:11434
 ```
 
-TLS is provided by a self-signed certificate generated at image build time. For production use, replace `/etc/nginx/certs/cert.pem` and `key.pem` with your own certificate (e.g. from Let's Encrypt).
+The Docker build has **three stages**:
+
+1. **`model-downloader`** (Python): Uses `huggingface_hub` to pre-fetch the
+   q4f16 ONNX weights + JSON configs for each configured local WebGPU model
+   (Llama 3.2 1B, SmolLM2 1.7B, Qwen 2.5 1.5B). Files land in `/models/`.
+2. **`builder`** (Node.js): Runs `pnpm install` and `vite build` with
+   `VITE_LOCAL_MODEL_BASE_URL=/models` baked in, so the WebGPU worker loads
+   models from the pre-fetched static assets instead of downloading from
+   HuggingFace at runtime.
+3. **`runtime`** (nginx): Serves the SPA and pre-fetched model files. The
+   `/models/` location returns **404** for missing files (not the SPA fallback)
+   so that transformers.js receives a proper HTTP error instead of HTML.
+
+The `/models/` nginx location deliberately does **not** fall back to
+`index.html`; this ensures that a misconfigured or missing model produces a
+clear 404 rather than a confusing JSON parse error inside the WebGPU worker.
+
+> **Model / Dockerfile consistency rule** — the model repos listed in
+> `Dockerfile.web` must exactly match `SUPPORTED_LOCAL_MODELS` in
+> `localModelStore.ts` and the `local-webgpu` provider entries in
+> `providerStore.ts`. All three sources reference:
+> - `onnx-community/Llama-3.2-1B-Instruct-q4f16`
+> - `HuggingFaceTB/SmolLM2-1.7B-Instruct`
+> - `onnx-community/Qwen2.5-1.5B-Instruct`
+
+TLS is provided by a self-signed certificate generated at image build time. For production use, replace the nginx cert/key with your own certificate (e.g. from Let's Encrypt).
 
 The `web` service depends on `proxy` via a Docker health-check so nginx only starts accepting traffic once the proxy is ready.

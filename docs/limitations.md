@@ -8,9 +8,10 @@
 
 ### WebGPU Local Models
 - Requires a WebGPU-capable browser (Chrome 113+ / Edge 113+). Firefox and Safari have experimental or no support.
-- Model weights are large (1–4 GB). Initial download can be slow; subsequent loads read from IndexedDB cache.
+- Model weights are large (~1–1.3 GB per model). Initial download can be slow on the first run; subsequent loads read from the browser's HTTP cache or IndexedDB.
+- In the Docker image all three models are pre-fetched at build time and served as static assets — no runtime network access is required for model weights.
 - Inference speed depends heavily on GPU. Integrated GPUs (iGPU) are significantly slower than discrete GPUs.
-- Only a small set of quantised models are pre-configured. Adding other models requires code changes.
+- Only text-only models are supported. Multimodal variants (e.g. Gemma 4 with vision/audio encoders) require separate ONNX sub-graphs that `AutoModelForCausalLM.from_pretrained` does not handle and are intentionally excluded.
 - Function calling support for local models is limited and may produce unreliable results.
 
 ### Pyodide (Python)
