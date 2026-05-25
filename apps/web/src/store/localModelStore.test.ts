@@ -11,7 +11,7 @@ vi.mock("@/lib/providers/local-webgpu", () => ({
 import { localWebGPUProvider } from "@/lib/providers/local-webgpu";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-const VALID_MODEL = "onnx-community/Llama-3.2-1B-Instruct-q4f16";
+const VALID_MODEL = "onnx-community/Llama-3.2-1B-Instruct";
 const VALID_QWEN = "onnx-community/Qwen2.5-1.5B-Instruct";
 const VALID_SMOL = "HuggingFaceTB/SmolLM2-1.7B-Instruct";
 const UNKNOWN_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";

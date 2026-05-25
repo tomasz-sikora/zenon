@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { localWebGPUProvider } from "@/lib/providers/local-webgpu";
 
 const SUPPORTED_LOCAL_MODELS = new Set([
-  "onnx-community/Llama-3.2-1B-Instruct-q4f16",
+  "onnx-community/Llama-3.2-1B-Instruct",
   "HuggingFaceTB/SmolLM2-1.7B-Instruct",
   "onnx-community/Qwen2.5-1.5B-Instruct",
 ]);

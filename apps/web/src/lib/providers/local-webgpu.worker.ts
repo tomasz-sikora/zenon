@@ -19,13 +19,12 @@ if (LOCAL_MODEL_BASE) {
   env.allowRemoteModels = false;
 }
 
-// Llama 3.2 1B Instruct — text-only, ~0.7 GB at q4f16, well-tested in the official
+// Llama 3.2 1B Instruct — text-only, well-tested in the official
 // `transformers.js` WebGPU examples. Fits comfortably on a MacBook M1 / 16 GB.
-// Multimodal variants like Gemma 3n / Gemma 4 are intentionally avoided here:
-// their ONNX graphs require extra inputs (per_layer_inputs, input_features, …)
-// that `tokenizer.apply_chat_template` does not produce, which surfaces in the
-// browser as `invalid data location: undefined for input "input_ids"`.
-const DEFAULT_MODEL_ID = "onnx-community/Llama-3.2-1B-Instruct-q4f16";
+// The base repo (without the -q4f16 suffix) ships both model_q4.onnx and
+// model_q4f16.onnx; the worker picks the right variant at runtime based on
+// whether the WebGPU adapter supports the shader-f16 extension.
+const DEFAULT_MODEL_ID = "onnx-community/Llama-3.2-1B-Instruct";
 
 /** A message suitable for Mistral's chat template */
 type EnhancedChatMessage = {
@@ -142,8 +141,22 @@ async function loadModel(modelId = DEFAULT_MODEL_ID): Promise<LoadedPipeline> {
       progress_callback: progressCallback,
     });
 
+    // Choose dtype based on hardware float16 support.
+    // shader-f16 is not universally available (e.g. absent on some Windows/DX12
+    // drivers and older GPUs), so fall back to q4 (float32 activations) when
+    // the adapter doesn't advertise the feature.
+    let dtype: "q4f16" | "q4" = "q4";
+    try {
+      const adapter = await (navigator as { gpu?: { requestAdapter?: () => Promise<{ features?: Set<string> } | null> } }).gpu?.requestAdapter?.();
+      if (adapter?.features?.has("shader-f16")) {
+        dtype = "q4f16";
+      }
+    } catch {
+      // Treat adapter query failure as no float16 support
+    }
+
     const model = await AutoModelForCausalLM.from_pretrained(resolvedId, {
-      dtype: "q4f16",
+      dtype,
       device: "webgpu",
       progress_callback: progressCallback,
     } as Parameters<typeof AutoModelForCausalLM.from_pretrained>[1]);

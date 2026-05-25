@@ -101,7 +101,7 @@ const BUILTIN_PROVIDERS: ProviderConfig[] = [
     enabled: true,
     models: [
       {
-        id: "onnx-community/Llama-3.2-1B-Instruct-q4f16",
+        id: "onnx-community/Llama-3.2-1B-Instruct",
         name: "Llama 3.2 1B (WebGPU)",
         contextWindow: 131072,
         supportsVision: false,
