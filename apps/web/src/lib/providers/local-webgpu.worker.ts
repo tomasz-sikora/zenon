@@ -1,6 +1,6 @@
 import {
-  AutoModelForCausalLM,
-  AutoTokenizer,
+  AutoModelForImageTextToText,
+  AutoProcessor,
   InterruptableStoppingCriteria,
   TextStreamer,
   env,
@@ -21,38 +21,16 @@ if (LOCAL_MODEL_BASE) {
   // from nginx. Without this, a stale cached copy (e.g. an incomplete file from
   // a previous deployment) persists indefinitely and causes "invalid data
   // location" errors during ORT inference even after the server files are fixed.
-  // Local models are always available from the container, so re-downloading on
-  // each page load is the only safe way to guarantee consistency.
   env.useBrowserCache = false;
 }
 
-// SmolLM2 1.7B Instruct — text-only, self-contained q4 ONNX (~1.3 GB),
-// no external data file needed. Llama 3.2 1B is also supported but requires
-// its model_q4.onnx_data companion file to be present (see Dockerfile.web).
-const DEFAULT_MODEL_ID = "HuggingFaceTB/SmolLM2-1.7B-Instruct";
+const MODEL_ID = "mistralai/Ministral-3-3B-Instruct-2512-ONNX";
 
-/** A message suitable for Mistral's chat template */
 type EnhancedChatMessage = {
   role: string;
   content: string;
-  tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
   tool_call_id?: string;
   name?: string;
-};
-
-type MistralTool = {
-  type: "function";
-  function: {
-    name: string;
-    description: string;
-    parameters: Record<string, unknown>;
-  };
-};
-
-type ParsedToolCall = {
-  name: string;
-  arguments: Record<string, unknown>;
-  id: string;
 };
 
 type ProgressMessage = {
@@ -66,8 +44,8 @@ type ProgressMessage = {
 
 type WorkerRequest =
   | { type: "check" }
-  | { type: "load"; data?: { modelId?: string } }
-  | { type: "generate"; data: { messages: EnhancedChatMessage[]; tools?: MistralTool[] } }
+  | { type: "load" }
+  | { type: "generate"; data: { messages: EnhancedChatMessage[] } }
   | { type: "interrupt" }
   | { type: "reset" };
 
@@ -77,19 +55,8 @@ type WorkerResponse =
   | { status: "progress"; file?: string; name?: string; loaded?: number; total?: number; progress?: number }
   | { status: "ready"; modelId: string }
   | { status: "update"; output: string }
-  | { status: "tool_calls"; toolCalls: ParsedToolCall[] }
   | { status: "complete" }
   | { status: "error"; error: string };
-
-type LoadedPipeline = {
-  tokenizer: Awaited<ReturnType<typeof AutoTokenizer.from_pretrained>>;
-  model: Awaited<ReturnType<typeof AutoModelForCausalLM.from_pretrained>>;
-};
-
-let pipelinePromise: Promise<LoadedPipeline> | null = null;
-let pipelineInstance: LoadedPipeline | null = null;
-let currentModelId = DEFAULT_MODEL_ID;
-const stoppingCriteria = new InterruptableStoppingCriteria();
 
 function post(message: WorkerResponse) {
   self.postMessage(message);
@@ -103,162 +70,89 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function progressCallback(progress: ProgressMessage) {
+function progressCallback(info: ProgressMessage) {
   post({
     status: "progress",
-    file: progress.file,
-    name: progress.name,
-    loaded: progress.loaded,
-    total: progress.total,
-    progress: progress.progress,
+    file: info.file,
+    name: info.name,
+    loaded: info.loaded,
+    total: info.total,
+    progress: info.progress,
   });
 }
 
-async function loadModel(modelId = DEFAULT_MODEL_ID): Promise<LoadedPipeline> {
-  if (!isWebGPUSupported()) {
-    throw new Error("WebGPU is not supported in this browser.");
-  }
+class MinistralEngine {
+  private processor: Awaited<ReturnType<typeof AutoProcessor.from_pretrained>> | null = null;
+  private model: Awaited<ReturnType<typeof AutoModelForImageTextToText.from_pretrained>> | null = null;
+  private stoppingCriteria = new InterruptableStoppingCriteria();
+  public isLoaded = false;
+  public isLoading = false;
 
-  if (pipelineInstance && currentModelId === modelId) {
-    return pipelineInstance;
-  }
+  async load() {
+    if (this.isLoaded) return;
+    if (this.isLoading) return;
+    this.isLoading = true;
 
-  if (pipelinePromise && currentModelId === modelId) {
-    return pipelinePromise;
-  }
+    // Resolve from pre-fetched static assets when available, otherwise fall back
+    // to the HuggingFace Hub (dev / non-Docker environments).
+    const resolvedId = LOCAL_MODEL_BASE ? `${LOCAL_MODEL_BASE}/${MODEL_ID}` : MODEL_ID;
 
-  if (currentModelId !== modelId) {
-    pipelineInstance = null;
-    pipelinePromise = null;
-  }
-
-  currentModelId = modelId;
-  post({ status: "loading", data: `Loading ${modelId}…` });
-
-  // Resolve from pre-fetched static assets when available, otherwise fall back
-  // to the HuggingFace Hub (dev / non-Docker environments).
-  const resolvedId = LOCAL_MODEL_BASE
-    ? `${LOCAL_MODEL_BASE}/${modelId.replace(/^\/+/, "")}`
-    : modelId;
-
-  pipelinePromise = (async () => {
-    const tokenizer = await AutoTokenizer.from_pretrained(resolvedId, {
-      progress_callback: progressCallback,
-    });
-
-    // transformers.js 4.x defaults text-generation to dtype:'q4' for good reason:
-    // q4 uses 4-bit weights with float32 activations — no shader-f16 required.
-    // q4f16 additionally uses float16 for activations AND the KV cache, which
-    // requires the WebGPU shader-f16 extension and fails on many GPUs/drivers
-    // with "Unsupported tensor type: float16".
-    const model = await AutoModelForCausalLM.from_pretrained(resolvedId, {
-      dtype: "q4",
-      device: "webgpu",
-      progress_callback: progressCallback,
-    } as Parameters<typeof AutoModelForCausalLM.from_pretrained>[1]);
-
-    const loaded = { tokenizer, model };
-    pipelineInstance = loaded;
-
-    post({ status: "loading", data: "Warming up model…" });
-    const warmupInputs = tokenizer.apply_chat_template(
-      [{ role: "user", content: "Hello" }],
-      { add_generation_prompt: true, return_dict: true },
-    );
-    stoppingCriteria.reset();
-    await model.generate({
-      ...warmupInputs,
-      max_new_tokens: 1,
-      do_sample: false,
-      stopping_criteria: stoppingCriteria,
-    });
-
-    post({ status: "ready", modelId });
-    return loaded;
-  })();
-
-  try {
-    return await pipelinePromise;
-  } catch (error) {
-    pipelineInstance = null;
-    pipelinePromise = null;
-    throw error;
-  }
-}
-
-function parseToolCalls(output: string): ParsedToolCall[] {
-  // Qwen2.5 / Llama 3.2 format: <tool_call>{"name": "...", "arguments": {...}}</tool_call>
-  const qwenMatches = [...output.matchAll(/<tool_call>([\s\S]*?)<\/tool_call>/g)];
-  if (qwenMatches.length > 0) {
-    const calls: ParsedToolCall[] = [];
-    for (let i = 0; i < qwenMatches.length; i++) {
-      try {
-        const parsed: unknown = JSON.parse(qwenMatches[i][1].trim());
-        if (
-          typeof parsed === "object" &&
-          parsed !== null &&
-          "name" in parsed &&
-          typeof (parsed as Record<string, unknown>).name === "string"
-        ) {
-          const tc = parsed as { name: string; arguments?: Record<string, unknown>; id?: string };
-          calls.push({
-            name: tc.name,
-            arguments: typeof tc.arguments === "object" && tc.arguments !== null ? tc.arguments : {},
-            id: tc.id ?? `local_${i}_${Date.now()}`,
-          });
-        }
-      } catch {
-        // ignore malformed entry
-      }
-    }
-    if (calls.length > 0) return calls;
-  }
-
-  // Mistral v3 fallback: [TOOL_CALLS] [{"name": "...", "arguments": {...}, "id": "..."}]
-  const mistralMatch = output.match(/\[TOOL_CALLS\]\s*(\[[\s\S]*?\])/);
-  if (mistralMatch) {
     try {
-      const parsed: unknown[] = JSON.parse(mistralMatch[1]);
-      if (Array.isArray(parsed)) {
-        return parsed
-          .filter(
-            (tc): tc is { name: string; arguments: Record<string, unknown>; id?: string } =>
-              typeof tc === "object" &&
-              tc !== null &&
-              "name" in tc &&
-              typeof (tc as Record<string, unknown>).name === "string",
-          )
-          .map((tc, i) => ({
-            name: tc.name,
-            arguments: typeof tc.arguments === "object" && tc.arguments !== null ? tc.arguments : {},
-            id: tc.id ?? `local_${i}_${Date.now()}`,
-          }));
-      }
-    } catch {
-      // ignore
+      post({ status: "loading", data: `Loading ${MODEL_ID}…` });
+
+      this.processor = await AutoProcessor.from_pretrained(resolvedId, {
+        progress_callback: progressCallback,
+      });
+
+      // dtype: embed_tokens fp16 (~805 MB) + decoder q4f16 (~2 GB) — text-only,
+      // no vision_encoder needed. Total download ~2.8 GB.
+      this.model = await AutoModelForImageTextToText.from_pretrained(resolvedId, {
+        dtype: {
+          embed_tokens: "fp16",
+          decoder_model_merged: "q4f16",
+        },
+        device: "webgpu",
+        progress_callback: progressCallback,
+      } as Parameters<typeof AutoModelForImageTextToText.from_pretrained>[1]);
+
+      post({ status: "loading", data: "Warming up model…" });
+      this.stoppingCriteria.reset();
+      const warmupInputs = this.processor.tokenizer!.apply_chat_template(
+        [{ role: "user", content: "Hi" }],
+        { add_generation_prompt: true, return_dict: true },
+      );
+      await this.model.generate({
+        ...warmupInputs,
+        max_new_tokens: 1,
+        do_sample: false,
+        stopping_criteria: this.stoppingCriteria,
+      });
+
+      this.isLoaded = true;
+      post({ status: "ready", modelId: MODEL_ID });
+    } catch (err) {
+      this.isLoaded = false;
+      this.processor = null;
+      this.model = null;
+      throw err;
+    } finally {
+      this.isLoading = false;
     }
   }
 
-  return [];
-}
+  async generate(messages: EnhancedChatMessage[]) {
+    if (!this.model || !this.processor) {
+      throw new Error("Model not loaded");
+    }
 
-async function generate(messages: EnhancedChatMessage[], tools?: MistralTool[]) {
-  const { tokenizer, model } = await loadModel(currentModelId);
+    const inputs = this.processor.tokenizer!.apply_chat_template(messages, {
+      add_generation_prompt: true,
+      return_dict: true,
+    });
 
-  const templateOptions: Record<string, unknown> = {
-    add_generation_prompt: true,
-    return_dict: true,
-  };
-  if (tools?.length) {
-    templateOptions.tools = tools;
-  }
+    this.stoppingCriteria.reset();
 
-  const inputs = tokenizer.apply_chat_template(messages, templateOptions);
-  stoppingCriteria.reset();
-
-  if (!tools?.length) {
-    // Text-only mode: stream tokens live for smooth UX
-    const streamer = new TextStreamer(tokenizer, {
+    const streamer = new TextStreamer(this.processor.tokenizer!, {
       skip_prompt: true,
       skip_special_tokens: true,
       callback_function: (output: string) => {
@@ -268,55 +162,34 @@ async function generate(messages: EnhancedChatMessage[], tools?: MistralTool[]) 
       },
     });
 
-    await model.generate({
+    await this.model.generate({
       ...inputs,
       max_new_tokens: 2048,
       do_sample: true,
       top_k: 3,
       temperature: 0.2,
       streamer,
-      stopping_criteria: stoppingCriteria,
+      stopping_criteria: this.stoppingCriteria,
       return_dict_in_generate: true,
     });
 
     post({ status: "complete" });
-  } else {
-    // Tool-calling mode: keep special tokens so we can detect [TOOL_CALLS]
-    let fullOutput = "";
+  }
 
-    const streamer = new TextStreamer(tokenizer, {
-      skip_prompt: true,
-      skip_special_tokens: false,
-      callback_function: (output: string) => {
-        if (output) fullOutput += output;
-      },
-    });
+  interrupt() {
+    this.stoppingCriteria.interrupt();
+  }
 
-    await model.generate({
-      ...inputs,
-      max_new_tokens: 2048,
-      do_sample: false,
-      streamer,
-      stopping_criteria: stoppingCriteria,
-      return_dict_in_generate: true,
-    });
-
-    const toolCalls = parseToolCalls(fullOutput);
-
-    if (toolCalls.length > 0) {
-      post({ status: "tool_calls", toolCalls });
-    } else {
-      // Strip residual special tokens (Qwen, Llama, Mistral formats)
-      const cleanOutput = fullOutput
-        .replace(/<tool_call>[\s\S]*?<\/tool_call>/g, "")
-        .replace(/\[\/INST\]|\[INST\]|<s>|<\/s>|\[TOOL_CALLS\]/g, "")
-        .trim();
-
-      if (cleanOutput) post({ status: "update", output: cleanOutput });
-      post({ status: "complete" });
-    }
+  reset() {
+    this.stoppingCriteria.reset();
+    this.isLoaded = false;
+    this.isLoading = false;
+    this.processor = null;
+    this.model = null;
   }
 }
+
+const engine = new MinistralEngine();
 
 self.addEventListener("message", async (event: MessageEvent<WorkerRequest>) => {
   const { type } = event.data;
@@ -328,22 +201,22 @@ self.addEventListener("message", async (event: MessageEvent<WorkerRequest>) => {
         break;
 
       case "load":
-        await loadModel(event.data.data?.modelId ?? DEFAULT_MODEL_ID);
+        await engine.load();
         break;
 
       case "generate":
-        await generate(event.data.data.messages, event.data.data.tools);
+        if (!engine.isLoaded) {
+          await engine.load();
+        }
+        await engine.generate(event.data.data.messages);
         break;
 
       case "interrupt":
-        stoppingCriteria.interrupt();
+        engine.interrupt();
         break;
 
       case "reset":
-        stoppingCriteria.reset();
-        pipelineInstance = null;
-        pipelinePromise = null;
-        currentModelId = DEFAULT_MODEL_ID;
+        engine.reset();
         break;
     }
   } catch (error) {

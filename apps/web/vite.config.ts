@@ -68,6 +68,9 @@ export default defineConfig({
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
+    // Prefer .ts/.tsx over .js/.jsx so tests always run the TypeScript source,
+    // not any stale compiled .js files that may live alongside the sources.
+    extensions: [".mts", ".ts", ".tsx", ".mjs", ".js", ".jsx", ".json"],
   },
   optimizeDeps: {
     exclude: ["@xenova/transformers", "@huggingface/transformers"],

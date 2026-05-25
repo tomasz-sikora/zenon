@@ -11,10 +11,8 @@ vi.mock("@/lib/providers/local-webgpu", () => ({
 import { localWebGPUProvider } from "@/lib/providers/local-webgpu";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
-const VALID_MODEL = "onnx-community/Llama-3.2-1B-Instruct";
-const VALID_QWEN = "onnx-community/Qwen2.5-1.5B-Instruct";
-const VALID_SMOL = "HuggingFaceTB/SmolLM2-1.7B-Instruct";
-const UNKNOWN_MODEL = "onnx-community/gemma-4-E2B-it-ONNX";
+const VALID_MODEL = "mistralai/Ministral-3-3B-Instruct-2512-ONNX";
+const UNKNOWN_MODEL = "onnx-community/Llama-3.2-1B-Instruct";
 
 function resetStore() {
   useLocalModelStore.getState().reset();
@@ -126,26 +124,19 @@ describe("useLocalModelStore", () => {
       );
     });
 
-    it.each([
-      ["Llama 3.2 1B", VALID_MODEL],
-      ["Qwen 2.5 1.5B", VALID_QWEN],
-      ["SmolLM2 1.7B", VALID_SMOL],
-    ])("loads %s (%s) successfully", async (_label, modelId) => {
-      await useLocalModelStore.getState().loadModel(modelId);
+    it("loads Ministral 3B successfully", async () => {
+      await useLocalModelStore.getState().loadModel(VALID_MODEL);
 
       const state = useLocalModelStore.getState();
       expect(state.status).toBe("ready");
-      expect(state.modelId).toBe(modelId);
+      expect(state.modelId).toBe(VALID_MODEL);
       expect(state.progress).toBe(100);
       expect(state.error).toBeNull();
     });
 
-    it("invokes preload with the selected modelId", async () => {
-      await useLocalModelStore.getState().loadModel(VALID_QWEN);
-      expect(localWebGPUProvider.preload).toHaveBeenCalledWith(
-        expect.any(Function),
-        VALID_QWEN,
-      );
+    it("invokes preload for Ministral 3B", async () => {
+      await useLocalModelStore.getState().loadModel(VALID_MODEL);
+      expect(localWebGPUProvider.preload).toHaveBeenCalledWith(expect.any(Function));
     });
   });
 
