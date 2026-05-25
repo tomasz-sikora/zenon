@@ -1,9 +1,7 @@
-import type { Message, ToolDefinition, ToolUseContent, ToolResultContent } from "@zenon/shared-types";
+import type { Message, ToolUseContent, ToolResultContent } from "@zenon/shared-types";
 import type { AIProvider, CompletionOptions, StreamCallback } from "./base";
 
-// Llama 3.2 1B Instruct — text-only, ~0.7 GB at q4f16, well-tested in the official
-// transformers.js WebGPU examples; fits comfortably on a MacBook M1 / 16 GB.
-const DEFAULT_MODEL_ID = "onnx-community/Llama-3.2-1B-Instruct-q4f16";
+const MODEL_ID = "mistralai/Ministral-3-3B-Instruct-2512-ONNX";
 
 type ProgressEvent = {
   status: string;
@@ -28,30 +26,10 @@ type EnhancedChatMessage = {
   name?: string;
 };
 
-type MistralTool = {
-  type: "function";
-  function: {
-    name: string;
-    description: string;
-    parameters: Record<string, unknown>;
-  };
-};
-
-function toLocalTools(tools: ToolDefinition[]): MistralTool[] {
-  return tools.map((t) => ({
-    type: "function",
-    function: {
-      name: t.name,
-      description: t.description,
-      parameters: t.inputSchema as Record<string, unknown>,
-    },
-  }));
-}
-
 export class LocalWebGPUProvider implements AIProvider {
   static worker: Worker | null = null;
 
-  static readyModelId: string | null = null;
+  static isModelLoaded = false;
 
   static loadPromise: Promise<void> | null = null;
 
@@ -73,8 +51,8 @@ export class LocalWebGPUProvider implements AIProvider {
     return this.worker;
   }
 
-  static isLoaded(modelId: string): boolean {
-    return this.readyModelId === modelId;
+  static isLoaded(): boolean {
+    return this.isModelLoaded;
   }
 
   async preload(
@@ -86,9 +64,8 @@ export class LocalWebGPUProvider implements AIProvider {
       data?: string;
       progress?: number;
     }) => void,
-    modelId: string = DEFAULT_MODEL_ID,
   ): Promise<void> {
-    if (LocalWebGPUProvider.isLoaded(modelId)) {
+    if (LocalWebGPUProvider.isLoaded()) {
       onProgress({ status: "ready", progress: 100, data: "Model ready" });
       return;
     }
@@ -100,7 +77,7 @@ export class LocalWebGPUProvider implements AIProvider {
     }
 
     const worker = LocalWebGPUProvider.getWorker();
-    LocalWebGPUProvider.readyModelId = null;
+    LocalWebGPUProvider.isModelLoaded = false;
     LocalWebGPUProvider.loadPromise = new Promise<void>((resolve, reject) => {
       const handleMessage = (event: MessageEvent<ProgressEvent>) => {
         const message = event.data;
@@ -117,7 +94,7 @@ export class LocalWebGPUProvider implements AIProvider {
         }
 
         if (message.status === "ready") {
-          LocalWebGPUProvider.readyModelId = message.modelId ?? modelId;
+          LocalWebGPUProvider.isModelLoaded = true;
           cleanup();
           onProgress({ status: "ready", progress: 100, data: "Model ready" });
           resolve();
@@ -125,7 +102,7 @@ export class LocalWebGPUProvider implements AIProvider {
         }
 
         if (message.status === "error") {
-          LocalWebGPUProvider.readyModelId = null;
+          LocalWebGPUProvider.isModelLoaded = false;
           cleanup();
           reject(new Error(message.error ?? "Failed to load local WebGPU model."));
         }
@@ -137,22 +114,19 @@ export class LocalWebGPUProvider implements AIProvider {
       };
 
       worker.addEventListener("message", handleMessage);
-      worker.postMessage({ type: "load", data: { modelId } });
+      worker.postMessage({ type: "load" });
     });
 
     return LocalWebGPUProvider.loadPromise;
   }
 
   async complete(opts: CompletionOptions, onChunk: StreamCallback): Promise<void> {
-    const modelId = opts.modelId ?? DEFAULT_MODEL_ID;
-
-    if (!LocalWebGPUProvider.isLoaded(modelId)) {
-      await this.preload(() => undefined, modelId);
+    if (!LocalWebGPUProvider.isLoaded()) {
+      await this.preload(() => undefined);
     }
 
     const worker = LocalWebGPUProvider.getWorker();
     const messages = toChatMessages(opts.messages);
-    const tools = opts.tools?.length ? toLocalTools(opts.tools) : undefined;
 
     if (opts.signal?.aborted) {
       throw abortError();
@@ -164,23 +138,6 @@ export class LocalWebGPUProvider implements AIProvider {
 
         if (message.status === "update" && message.output) {
           onChunk({ type: "text", text: message.output });
-          return;
-        }
-
-        if (message.status === "tool_calls" && message.toolCalls?.length) {
-          for (const tc of message.toolCalls) {
-            const callId = tc.id ?? `local_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-            onChunk({ type: "tool_call_start", toolCallId: callId, toolName: tc.name });
-            onChunk({
-              type: "tool_call_end",
-              toolCallId: callId,
-              toolName: tc.name,
-              toolInput: tc.arguments,
-            });
-          }
-          cleanup();
-          onChunk({ type: "done" });
-          resolve();
           return;
         }
 
@@ -210,7 +167,7 @@ export class LocalWebGPUProvider implements AIProvider {
 
       worker.addEventListener("message", handleMessage);
       opts.signal?.addEventListener("abort", abortHandler, { once: true });
-      worker.postMessage({ type: "generate", data: { messages, tools } });
+      worker.postMessage({ type: "generate", data: { messages } });
     });
   }
 }

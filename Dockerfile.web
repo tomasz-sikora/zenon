@@ -1,11 +1,11 @@
 # ─── Stage 0: prefetch ONNX models ───────────────────────────────────────────
-# Download only the q4f16 ONNX weights + JSON configs so the runtime image
-# can serve them as static assets without any 3rd-party network dependency.
+# Download Ministral 3B Instruct (text-only ONNX components).
+# Files downloaded:
+#   onnx/embed_tokens_fp16.onnx + .onnx_data  (~805 MB)
+#   onnx/decoder_model_merged_q4f16.onnx + .onnx_data  (~2 GB)
+# Total: ~2.8 GB. No vision_encoder downloaded (text-only inference).
 #
-# Models must match SUPPORTED_LOCAL_MODELS in localModelStore.ts and the
-# local-webgpu provider entries in providerStore.ts. All three repos publish
-# a self-contained onnx/model_q4f16.onnx file that transformers.js loads
-# when dtype:"q4f16" is requested.
+# dtype used by the worker: { embed_tokens: 'fp16', decoder_model_merged: 'q4f16' }
 FROM python:3.12-slim AS model-downloader
 
 # Optional: pass --build-arg HF_TOKEN=<token> for gated/private repos.
@@ -13,30 +13,40 @@ ARG HF_TOKEN=""
 
 RUN pip install --no-cache-dir "huggingface_hub"
 
-# Llama 3.2 1B Instruct (~1.24 GB at q4f16) — well-tested in transformers.js
-# WebGPU examples; text-only, fits on M1/16 GB.
+# Ministral 3B Instruct — text-only components (embed_tokens fp16 + decoder q4f16, ~2.8 GB).
 RUN python3 -c "\
 import os; \
 from huggingface_hub import snapshot_download; \
 token = os.environ.get('HF_TOKEN') or None; \
-snapshot_download(repo_id='onnx-community/Llama-3.2-1B-Instruct-q4f16', allow_patterns=['*.json', 'onnx/*q4f16*'], local_dir='/models/onnx-community/Llama-3.2-1B-Instruct-q4f16', token=token)" \
-  && echo "Llama model downloaded." || echo "WARNING: Llama model download failed, models will be fetched at runtime."
+snapshot_download(\
+repo_id='mistralai/Ministral-3-3B-Instruct-2512-ONNX', \
+allow_patterns=[\
+'*.json', \
+'*.jinja', \
+'onnx/embed_tokens_fp16.onnx', \
+'onnx/embed_tokens_fp16.onnx_data', \
+'onnx/decoder_model_merged_q4f16.onnx', \
+'onnx/decoder_model_merged_q4f16.onnx_data'\
+], \
+local_dir='/models/mistralai/Ministral-3-3B-Instruct-2512-ONNX', \
+token=token)" \
+  && echo "Ministral 3B text-only files downloaded." || echo "WARNING: Ministral 3B text-only download failed."
 
-# SmolLM2 1.7B Instruct (~1.11 GB at q4f16) — compact HuggingFace Smol model.
+# Ministral 3B — vision encoder q4 (~271 MB). Required by Mistral3ForConditionalGeneration
+# even when running text-only inference (transformers.js loads all submodels on init).
 RUN python3 -c "\
 import os; \
 from huggingface_hub import snapshot_download; \
 token = os.environ.get('HF_TOKEN') or None; \
-snapshot_download(repo_id='HuggingFaceTB/SmolLM2-1.7B-Instruct', allow_patterns=['*.json', 'onnx/*q4f16*'], local_dir='/models/HuggingFaceTB/SmolLM2-1.7B-Instruct', token=token)" \
-  && echo "SmolLM2 model downloaded." || echo "WARNING: SmolLM2 model download failed, models will be fetched at runtime."
-
-# Qwen2.5 1.5B Instruct (~1.22 GB at q4f16) — compact instruction-tuned model.
-RUN python3 -c "\
-import os; \
-from huggingface_hub import snapshot_download; \
-token = os.environ.get('HF_TOKEN') or None; \
-snapshot_download(repo_id='onnx-community/Qwen2.5-1.5B-Instruct', allow_patterns=['*.json', 'onnx/*q4f16*'], local_dir='/models/onnx-community/Qwen2.5-1.5B-Instruct', token=token)" \
-  && echo "Qwen model downloaded." || echo "WARNING: Qwen model download failed, models will be fetched at runtime."
+snapshot_download(\
+repo_id='mistralai/Ministral-3-3B-Instruct-2512-ONNX', \
+allow_patterns=[\
+'onnx/vision_encoder_q4.onnx', \
+'onnx/vision_encoder_q4.onnx_data'\
+], \
+local_dir='/models/mistralai/Ministral-3-3B-Instruct-2512-ONNX', \
+token=token)" \
+  && echo "Ministral 3B vision encoder downloaded." || echo "WARNING: Vision encoder download failed, models will be fetched at runtime."
 
 # ─── Stage 1: build the Vite app ────────────────────────────────────────────
 FROM node:22-alpine AS builder
@@ -73,7 +83,8 @@ RUN apk add --no-cache openssl && \
     openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
       -keyout /etc/nginx/ssl/server.key \
       -out  /etc/nginx/ssl/server.crt \
-      -subj "/CN=zenon-local"
+      -subj "/CN=zenon-local" \
+      -addext "subjectAltName=DNS:*.local,DNS:localhost,IP:127.0.0.1"
 
 COPY --from=builder /app/apps/web/dist /usr/share/nginx/html
 # Serve pre-fetched ONNX models as static assets

@@ -1,11 +1,7 @@
 import { create } from "zustand";
 import { localWebGPUProvider } from "@/lib/providers/local-webgpu";
 
-const SUPPORTED_LOCAL_MODELS = new Set([
-  "onnx-community/Llama-3.2-1B-Instruct-q4f16",
-  "HuggingFaceTB/SmolLM2-1.7B-Instruct",
-  "onnx-community/Qwen2.5-1.5B-Instruct",
-]);
+const SUPPORTED_MODEL_ID = "mistralai/Ministral-3-3B-Instruct-2512-ONNX";
 
 interface LocalModelState {
   status: "idle" | "loading" | "ready" | "error";
@@ -23,12 +19,12 @@ interface LocalModelState {
 
 const initialState = {
   status: "idle" as const,
-  modelId: null,
+  modelId: null as string | null,
   loadingText: "",
   progress: 0,
   progressFiles: {},
-  error: null,
-  webGPUSupported: null,
+  error: null as string | null,
+  webGPUSupported: null as boolean | null,
 };
 
 export const useLocalModelStore = create<LocalModelState>((set, get) => ({
@@ -60,11 +56,11 @@ export const useLocalModelStore = create<LocalModelState>((set, get) => ({
   },
 
   loadModel: async (modelId) => {
-    if (!SUPPORTED_LOCAL_MODELS.has(modelId)) {
+    if (modelId !== SUPPORTED_MODEL_ID) {
       set({
         status: "error",
         modelId,
-        error: `Unsupported local model: ${modelId}. Supported: ${[...SUPPORTED_LOCAL_MODELS].join(", ")}`,
+        error: `Unsupported local model: ${modelId}. Only ${SUPPORTED_MODEL_ID} is supported.`,
       });
       return;
     }
@@ -119,7 +115,7 @@ export const useLocalModelStore = create<LocalModelState>((set, get) => ({
             error: null,
           };
         });
-      }, modelId);
+      });
 
       set({
         status: "ready",
