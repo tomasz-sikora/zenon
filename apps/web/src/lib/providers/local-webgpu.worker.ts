@@ -17,6 +17,13 @@ if (LOCAL_MODEL_BASE) {
   // falling back to the HuggingFace Hub (which is disabled in Docker).
   env.allowLocalModels = true;
   env.allowRemoteModels = false;
+  // Disable the browser's CacheStorage cache so model files are always fetched
+  // from nginx. Without this, a stale cached copy (e.g. an incomplete file from
+  // a previous deployment) persists indefinitely and causes "invalid data
+  // location" errors during ORT inference even after the server files are fixed.
+  // Local models are always available from the container, so re-downloading on
+  // each page load is the only safe way to guarantee consistency.
+  env.useBrowserCache = false;
 }
 
 // SmolLM2 1.7B Instruct — text-only, self-contained q4 ONNX (~1.3 GB),
