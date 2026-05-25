@@ -104,11 +104,13 @@ class MinistralEngine {
         progress_callback: progressCallback,
       });
 
-      // dtype: embed_tokens fp16 (~805 MB) + decoder q4f16 (~2 GB) — text-only,
-      // no vision_encoder needed. Total download ~2.8 GB.
+      // dtype: embed_tokens fp16 (~805 MB) + vision_encoder q4 (~271 MB) + decoder q4f16 (~2 GB).
+      // The vision_encoder is required by Mistral3ForConditionalGeneration even for text-only
+      // inference — omitting it causes a model-load failure in transformers.js. Total ~3.1 GB.
       this.model = await AutoModelForImageTextToText.from_pretrained(resolvedId, {
         dtype: {
           embed_tokens: "fp16",
+          vision_encoder: "q4",
           decoder_model_merged: "q4f16",
         },
         device: "webgpu",
@@ -120,8 +122,9 @@ class MinistralEngine {
       const warmupInputs = this.processor.tokenizer!.apply_chat_template(
         [{ role: "user", content: "Hi" }],
         { add_generation_prompt: true, return_dict: true },
-      );
-      await this.model.generate({
+      ) as Record<string, unknown>;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (this.model.generate as any)({
         ...warmupInputs,
         max_new_tokens: 1,
         do_sample: false,
@@ -148,7 +151,7 @@ class MinistralEngine {
     const inputs = this.processor.tokenizer!.apply_chat_template(messages, {
       add_generation_prompt: true,
       return_dict: true,
-    });
+    }) as Record<string, unknown>;
 
     this.stoppingCriteria.reset();
 
@@ -162,7 +165,8 @@ class MinistralEngine {
       },
     });
 
-    await this.model.generate({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (this.model.generate as any)({
       ...inputs,
       max_new_tokens: 2048,
       do_sample: true,
@@ -170,7 +174,6 @@ class MinistralEngine {
       temperature: 0.2,
       streamer,
       stopping_criteria: this.stoppingCriteria,
-      return_dict_in_generate: true,
     });
 
     post({ status: "complete" });

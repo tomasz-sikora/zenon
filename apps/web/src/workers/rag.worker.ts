@@ -58,9 +58,11 @@ async function loadModel(modelId: string, progressId: string): Promise<FeatureEx
   loading = true;
   loadError = null;
   try {
-    embedder = await pipeline("feature-extraction", modelId, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // @ts-ignore — pipeline overloads produce a union type too complex for tsc in transformers.js 3.x
+    embedder = (await pipeline("feature-extraction", modelId, {
       progress_callback: progressCallback(progressId),
-    });
+    })) as FeatureExtractionPipeline;
     currentModelId = modelId;
     return embedder!;
   } catch (e) {

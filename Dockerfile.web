@@ -13,8 +13,7 @@ ARG HF_TOKEN=""
 
 RUN pip install --no-cache-dir "huggingface_hub"
 
-# Ministral 3B Instruct — text-only components (embed_tokens fp16 + decoder q4f16).
-# The vision_encoder is intentionally excluded to keep the download small (~2.8 GB total).
+# Ministral 3B Instruct — text-only components (embed_tokens fp16 + decoder q4f16, ~2.8 GB).
 RUN python3 -c "\
 import os; \
 from huggingface_hub import snapshot_download; \
@@ -31,7 +30,23 @@ allow_patterns=[\
 ], \
 local_dir='/models/mistralai/Ministral-3-3B-Instruct-2512-ONNX', \
 token=token)" \
-  && echo "Ministral 3B model downloaded." || echo "WARNING: Ministral 3B model download failed, models will be fetched at runtime."
+  && echo "Ministral 3B text-only files downloaded." || echo "WARNING: Ministral 3B text-only download failed."
+
+# Ministral 3B — vision encoder q4 (~271 MB). Required by Mistral3ForConditionalGeneration
+# even when running text-only inference (transformers.js loads all submodels on init).
+RUN python3 -c "\
+import os; \
+from huggingface_hub import snapshot_download; \
+token = os.environ.get('HF_TOKEN') or None; \
+snapshot_download(\
+repo_id='mistralai/Ministral-3-3B-Instruct-2512-ONNX', \
+allow_patterns=[\
+'onnx/vision_encoder_q4.onnx', \
+'onnx/vision_encoder_q4.onnx_data'\
+], \
+local_dir='/models/mistralai/Ministral-3-3B-Instruct-2512-ONNX', \
+token=token)" \
+  && echo "Ministral 3B vision encoder downloaded." || echo "WARNING: Vision encoder download failed, models will be fetched at runtime."
 
 # ─── Stage 1: build the Vite app ────────────────────────────────────────────
 FROM node:22-alpine AS builder
