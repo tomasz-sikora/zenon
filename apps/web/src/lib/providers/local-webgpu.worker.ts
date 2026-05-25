@@ -19,12 +19,10 @@ if (LOCAL_MODEL_BASE) {
   env.allowRemoteModels = false;
 }
 
-// Llama 3.2 1B Instruct — text-only, well-tested in the official
-// `transformers.js` WebGPU examples. Fits comfortably on a MacBook M1 / 16 GB.
-// The base repo (without the -q4f16 suffix) ships both model_q4.onnx and
-// model_q4f16.onnx; the worker picks the right variant at runtime based on
-// whether the WebGPU adapter supports the shader-f16 extension.
-const DEFAULT_MODEL_ID = "onnx-community/Llama-3.2-1B-Instruct";
+// SmolLM2 1.7B Instruct — text-only, self-contained q4 ONNX (~1.3 GB),
+// no external data file needed. Llama 3.2 1B is also supported but requires
+// its model_q4.onnx_data companion file to be present (see Dockerfile.web).
+const DEFAULT_MODEL_ID = "HuggingFaceTB/SmolLM2-1.7B-Instruct";
 
 /** A message suitable for Mistral's chat template */
 type EnhancedChatMessage = {

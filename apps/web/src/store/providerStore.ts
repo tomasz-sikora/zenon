@@ -101,15 +101,6 @@ const BUILTIN_PROVIDERS: ProviderConfig[] = [
     enabled: true,
     models: [
       {
-        id: "onnx-community/Llama-3.2-1B-Instruct",
-        name: "Llama 3.2 1B (WebGPU)",
-        contextWindow: 131072,
-        supportsVision: false,
-        supportsFunctionCalling: true,
-        supportsStreaming: true,
-        isLocal: true,
-      },
-      {
         id: "HuggingFaceTB/SmolLM2-1.7B-Instruct",
         name: "SmolLM2 1.7B (WebGPU)",
         contextWindow: 8192,
@@ -122,6 +113,15 @@ const BUILTIN_PROVIDERS: ProviderConfig[] = [
         id: "onnx-community/Qwen2.5-1.5B-Instruct",
         name: "Qwen 2.5 1.5B (WebGPU)",
         contextWindow: 32768,
+        supportsVision: false,
+        supportsFunctionCalling: true,
+        supportsStreaming: true,
+        isLocal: true,
+      },
+      {
+        id: "onnx-community/Llama-3.2-1B-Instruct",
+        name: "Llama 3.2 1B (WebGPU)",
+        contextWindow: 131072,
         supportsVision: false,
         supportsFunctionCalling: true,
         supportsStreaming: true,
