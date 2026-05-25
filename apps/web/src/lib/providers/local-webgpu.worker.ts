@@ -141,22 +141,13 @@ async function loadModel(modelId = DEFAULT_MODEL_ID): Promise<LoadedPipeline> {
       progress_callback: progressCallback,
     });
 
-    // Choose dtype based on hardware float16 support.
-    // shader-f16 is not universally available (e.g. absent on some Windows/DX12
-    // drivers and older GPUs), so fall back to q4 (float32 activations) when
-    // the adapter doesn't advertise the feature.
-    let dtype: "q4f16" | "q4" = "q4";
-    try {
-      const adapter = await (navigator as { gpu?: { requestAdapter?: () => Promise<{ features?: Set<string> } | null> } }).gpu?.requestAdapter?.();
-      if (adapter?.features?.has("shader-f16")) {
-        dtype = "q4f16";
-      }
-    } catch {
-      // Treat adapter query failure as no float16 support
-    }
-
+    // transformers.js 4.x defaults text-generation to dtype:'q4' for good reason:
+    // q4 uses 4-bit weights with float32 activations — no shader-f16 required.
+    // q4f16 additionally uses float16 for activations AND the KV cache, which
+    // requires the WebGPU shader-f16 extension and fails on many GPUs/drivers
+    // with "Unsupported tensor type: float16".
     const model = await AutoModelForCausalLM.from_pretrained(resolvedId, {
-      dtype,
+      dtype: "q4",
       device: "webgpu",
       progress_callback: progressCallback,
     } as Parameters<typeof AutoModelForCausalLM.from_pretrained>[1]);
